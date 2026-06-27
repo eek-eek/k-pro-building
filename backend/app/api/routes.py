@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
@@ -156,17 +156,25 @@ def delete_estimate(estimate_id: int, db: Session = Depends(get_db)) -> Response
 
 
 @router.post("/estimates/{estimate_id}/calc")
-async def calc_estimate(estimate_id: int, db: Session = Depends(get_db)) -> dict:
+async def calc_estimate(estimate_id: int, body: BuildingInput | None = Body(None),
+                        db: Session = Depends(get_db)) -> dict:
     est = db.get(Estimate, estimate_id)
     if est is None:
         raise HTTPException(status_code=404, detail="estimate not found")
-    cv = est.current_version
-    if cv is not None:
-        inp = BuildingInput(**cv.input)
+    if body is not None:
+        inp = body
+    elif est.current_version is not None:
+        inp = BuildingInput(**est.current_version.input)
     else:
         inp = BuildingInput(project_name=est.name or "Смета",
                             object_type=est.object_type or "Жилой дом",
                             city=est.city or "Астана / Казахстан")
+    # keep dashboard denorm fields in sync with the input being calculated
+    est.object_type = inp.object_type
+    est.city = inp.city
+    if not est.name:
+        est.name = inp.project_name
+    db.commit()
     runtime = job_manager.create(estimate_id)
     await job_manager.start(runtime, inp)
     return {"job_id": runtime.id}
