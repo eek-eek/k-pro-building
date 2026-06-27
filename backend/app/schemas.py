@@ -238,6 +238,16 @@ class ObjectCard(BaseModel):
     updated_at: str
 
 
+class ZoneVerdict(BaseModel):
+    status: str                       # allowed | restricted | unknown
+    land_use: str = ""                # целевое назначение (tsn_ru)
+    kad_nomer: str = ""
+    zone: str = ""                    # "водоохранная зона" | "кадастровый участок" | ""
+    source: str = "map.gov.kz/geoserver (WFS)"
+    note: str = ""
+    checked_at: Optional[str] = None
+
+
 class SuggestPricesRequest(BaseModel):
     source: str = "satu"
 
