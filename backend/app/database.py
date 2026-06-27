@@ -52,3 +52,15 @@ def init_db() -> None:
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_estimate_object_id()
+
+
+def _ensure_estimate_object_id() -> None:
+    """Идемпотентно добавить estimates.object_id на старой БД (SQLite create_all
+    не добавляет колонки в существующие таблицы)."""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(estimates)")]
+        if cols and "object_id" not in cols:
+            conn.exec_driver_sql("ALTER TABLE estimates ADD COLUMN object_id INTEGER")
