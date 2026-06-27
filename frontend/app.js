@@ -860,6 +860,17 @@ function promptBlock(p) {
 // ───────────────────────── objects (SP1) ─────────────────────────
 const CITY_CENTER = { "Алматы": [43.238, 76.889], "Астана": [51.128, 71.430] };
 
+// Leaflet подключён через <script defer>, а app.js исполняется раньше него.
+// При прямом заходе/обновлении на #/objects карта рендерится до загрузки L —
+// ждём, пока Leaflet и leaflet-draw станут доступны.
+function ensureLeaflet() {
+  return new Promise((resolve) => {
+    const ready = () => window.L && window.L.map && window.L.Control && window.L.Control.Draw;
+    if (ready()) return resolve();
+    const t = setInterval(() => { if (ready()) { clearInterval(t); resolve(); } }, 30);
+  });
+}
+
 function baseLayers() {
   const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     { maxZoom: 19, attribution: "© OpenStreetMap" });
@@ -872,6 +883,7 @@ function baseLayers() {
 let DRAWN = null; // {polygon, lat, lon}
 
 async function viewObjects() {
+  await ensureLeaflet();
   APP().innerHTML = `
     <div class="page">
       <div class="page-head"><h1 class="title">Объекты</h1>
@@ -946,6 +958,7 @@ async function drawObjList() {
 }
 
 async function viewObject(id) {
+  await ensureLeaflet();
   const data = await Api.getObject(id);
   const o = data.object;
   APP().innerHTML = `
