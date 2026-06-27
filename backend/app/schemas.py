@@ -162,6 +162,28 @@ class JobStatus(BaseModel):
     result: Optional[EstimateResult] = None
 
 
+class EstimateCard(BaseModel):
+    id: int
+    name: str
+    object_type: str
+    city: str
+    status: str
+    total: float
+    version_count: int
+    message_count: int
+    updated_at: str
+
+
+class EstimateCreate(BaseModel):
+    name: str = ""
+    input: Optional[BuildingInput] = None
+
+
+class EstimatePatch(BaseModel):
+    name: Optional[str] = None
+    input: Optional[BuildingInput] = None
+
+
 def to_jsonable(obj: Any) -> Any:
     """Рекурсивная сериализация Pydantic-моделей в JSON-совместимый вид."""
     if isinstance(obj, BaseModel):
