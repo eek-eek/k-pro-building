@@ -208,6 +208,36 @@ class RecommendationAdd(BaseModel):
     key: str = Field(min_length=1)
 
 
+class ObjectCreate(BaseModel):
+    name: str = ""
+    city: str = "Алматы"
+    lat: float
+    lon: float
+    polygon: Optional[dict] = None
+    area_m2: float = 0.0
+    notes: str = ""
+
+
+class ObjectPatch(BaseModel):
+    name: Optional[str] = None
+    city: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ObjectCard(BaseModel):
+    id: int
+    name: str
+    city: str
+    lat: float
+    lon: float
+    area_m2: float
+    status: str
+    source: str
+    score: Optional[float]
+    estimate_count: int
+    updated_at: str
+
+
 class SuggestPricesRequest(BaseModel):
     source: str = "satu"
 

@@ -100,6 +100,9 @@ class Estimate(Base):
     object_type: Mapped[str] = mapped_column(String(64), index=True, default="")
     city: Mapped[str] = mapped_column(String(128), default="")
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("building_objects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     current_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("estimate_versions.id", use_alter=True, ondelete="SET NULL"),
         nullable=True,
@@ -208,3 +211,23 @@ class Job(Base):
         ForeignKey("estimates.id"), nullable=True
     )
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class BuildingObject(Base):
+    """Объект строительства: местоположение, контур участка, концепт."""
+
+    __tablename__ = "building_objects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    city: Mapped[str] = mapped_column(String(128), default="Алматы")
+    lat: Mapped[float] = mapped_column(Float)
+    lon: Mapped[float] = mapped_column(Float)
+    polygon: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    area_m2: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|selected
+    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual|auto
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

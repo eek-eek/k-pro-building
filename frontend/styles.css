@@ -332,3 +332,10 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
   }
   .grid { grid-template-columns: 1fr; }
 }
+
+/* ── Карта и объекты (SP1) ── */
+.map { height: 460px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+.map-mini { height: 240px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.obj-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
+.obj-form .field { margin: 0; min-width: 160px; }
+.concept-panel { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 14px 0; background: var(--surface); }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import select
@@ -13,15 +14,18 @@ from ..calc import (
     applicable_recommendations, build_recommendation_line,
 )
 from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
+from ..concept import propose_concept
 from ..database import get_db
+from ..geo import bbox_dims_m, polygon_area_m2
 from ..jobs import job_manager
-from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
+from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
 from ..prompts import PROMPT_DEFAULTS
 from ..schemas import (
     BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
-    EstimateResult, JobStatus, ManualEditRequest, NormSource, RecommendationAdd, RollbackRequest,
+    EstimateResult, JobStatus, ManualEditRequest, NormSource,
+    ObjectCard, ObjectCreate, ObjectPatch, RecommendationAdd, RollbackRequest,
     to_jsonable, SettingsUpdate, TestConnectionRequest, PromptUpdate, SuggestPricesRequest,
 )
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
@@ -124,7 +128,8 @@ def get_estimate_full(estimate_id: int, db: Session = Depends(get_db)) -> dict:
     cv = est.current_version
     return {
         "estimate": {"id": est.id, "name": est.name, "object_type": est.object_type,
-                     "city": est.city, "status": est.status},
+                     "city": est.city, "status": est.status, "object_id": est.object_id},
+        "object_id": est.object_id,
         "current_version": ({"version_number": cv.version_number, "input": cv.input,
                              "result": cv.result, "source": cv.source} if cv else None),
         "version_count": db.query(EstimateVersion).filter_by(estimate_id=est.id).count(),
@@ -496,3 +501,117 @@ def reset_prompt(key: str, db: Session = Depends(get_db)) -> dict:
     row.is_custom = False
     db.commit()
     return {"ok": True}
+
+
+# ───────────────────────── Объекты строительства ─────────────────────────
+def _object_card(db: Session, obj: BuildingObject) -> ObjectCard:
+    cnt = db.query(Estimate).filter_by(object_id=obj.id).count()
+    return ObjectCard(
+        id=obj.id, name=obj.name, city=obj.city, lat=obj.lat, lon=obj.lon,
+        area_m2=obj.area_m2, status=obj.status, source=obj.source, score=obj.score,
+        estimate_count=cnt, updated_at=obj.updated_at.isoformat(timespec="seconds"),
+    )
+
+
+@router.get("/objects")
+def list_objects(db: Session = Depends(get_db)) -> list[ObjectCard]:
+    rows = db.scalars(select(BuildingObject).order_by(BuildingObject.updated_at.desc())).all()
+    return [_object_card(db, o) for o in rows]
+
+
+@router.post("/objects")
+def create_object(body: ObjectCreate, db: Session = Depends(get_db)) -> dict:
+    area = body.area_m2
+    if not area and body.polygon:
+        area = polygon_area_m2(body.polygon)
+    obj = BuildingObject(name=body.name or "Объект", city=body.city, lat=body.lat,
+                         lon=body.lon, polygon=body.polygon, area_m2=area, notes=body.notes)
+    db.add(obj)
+    db.commit()
+    return {"id": obj.id}
+
+
+@router.get("/objects/{object_id}")
+def get_object(object_id: int, db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    ests = db.scalars(select(Estimate).where(Estimate.object_id == object_id)).all()
+    return {
+        "object": _object_card(db, obj).model_dump(),
+        "polygon": obj.polygon,
+        "notes": obj.notes,
+        "estimates": [{"id": e.id, "name": e.name, "status": e.status,
+                       "total": (e.current_version.total if e.current_version else 0.0)}
+                      for e in ests],
+    }
+
+
+@router.patch("/objects/{object_id}")
+def patch_object(object_id: int, body: ObjectPatch, db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    if body.name is not None:
+        obj.name = body.name
+    if body.city is not None:
+        obj.city = body.city
+    if body.notes is not None:
+        obj.notes = body.notes
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/objects/{object_id}", status_code=204)
+def delete_object(object_id: int, db: Session = Depends(get_db)) -> Response:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    db.query(Estimate).filter_by(object_id=object_id).update({"object_id": None})
+    db.delete(obj)
+    db.commit()
+    return Response(status_code=204)
+
+
+def _object_dims(obj: BuildingObject) -> tuple[float, float]:
+    if obj.polygon:
+        return bbox_dims_m(obj.polygon)
+    side = math.sqrt(obj.area_m2) if obj.area_m2 > 0 else 30.0
+    return side, side
+
+
+@router.get("/objects/{object_id}/concept")
+def object_concept(object_id: int, object_type: str = "Жилой дом",
+                   floors: int | None = None, db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    length, width = _object_dims(obj)
+    inp = propose_concept(obj.area_m2 or (length * width), length, width,
+                          obj.city, object_type, floors)
+    inp.project_name = obj.name or "Смета"
+    return to_jsonable(inp)
+
+
+@router.post("/objects/{object_id}/estimate")
+def object_create_estimate(object_id: int, body: BuildingInput | None = Body(None),
+                           db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    if body is not None:
+        inp = body
+    else:
+        length, width = _object_dims(obj)
+        inp = propose_concept(obj.area_m2 or (length * width), length, width,
+                              obj.city, "Жилой дом", None)
+        inp.project_name = obj.name or "Смета"
+    profile = resolve_norm_profile(db, inp)
+    result = build_estimate(db, inp, profile)
+    est = Estimate(name=inp.project_name or obj.name, object_type=inp.object_type,
+                   city=inp.city, object_id=object_id)
+    db.add(est)
+    db.flush()
+    version = create_version(db, est, inp, result, source="initial")
+    db.commit()
+    return {"estimate_id": est.id, "version_number": version.version_number}

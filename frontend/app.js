@@ -55,6 +55,15 @@ const Api = {
   recommendations: (id) => api("GET", `/estimates/${id}/recommendations`),
   addRecommendation: (id, key) => api("POST", `/estimates/${id}/recommendations`, { key }),
   suggestPrices: (id, source) => api("POST", `/estimates/${id}/suggest-material-prices`, { source }),
+  listObjects: () => api("GET", "/objects"),
+  createObject: (body) => api("POST", "/objects", body),
+  getObject: (id) => api("GET", `/objects/${id}`),
+  patchObject: (id, patch) => api("PATCH", `/objects/${id}`, patch),
+  deleteObject: (id) => api("DELETE", `/objects/${id}`),
+  objectConcept: (id, object_type, floors) =>
+    api("GET", `/objects/${id}/concept?object_type=${encodeURIComponent(object_type)}` +
+      (floors ? `&floors=${floors}` : "")),
+  objectCreateEstimate: (id, input) => api("POST", `/objects/${id}/estimate`, input),
   verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
@@ -138,11 +147,15 @@ function parseRoute() {
   const h = (location.hash || "#/").replace(/^#/, "");
   const m = h.match(/^\/estimate\/(\d+)/);
   if (m) return { name: "detail", id: Number(m[1]) };
+  const mo = h.match(/^\/object\/(\d+)/);
+  if (mo) return { name: "object", id: Number(mo[1]) };
+  if (h.startsWith("/objects")) return { name: "objects" };
   if (h.startsWith("/settings")) return { name: "settings" };
   return { name: "dashboard" };
 }
 function setActiveNav(route) {
-  const target = route.name === "settings" ? "#/settings" : "#/";
+  const target = route.name === "settings" ? "#/settings"
+    : (route.name === "objects" || route.name === "object") ? "#/objects" : "#/";
   document.querySelectorAll(".nav a.link").forEach((a) =>
     a.classList.toggle("active", a.dataset.nav === target));
 }
@@ -152,6 +165,8 @@ async function render() {
   try {
     if (route.name === "detail") await viewDetail(route.id);
     else if (route.name === "settings") await viewSettings();
+    else if (route.name === "objects") await viewObjects();
+    else if (route.name === "object") await viewObject(route.id);
     else await viewDashboard();
   } catch (e) {
     APP().innerHTML = `<div class="page"><div class="empty">Ошибка: ${escapeHtml(e.detail || e.message || e)}</div></div>`;
@@ -251,7 +266,8 @@ async function viewDetail(id) {
           <button class="btn sm" id="exportBtn">Экспорт Word</button>` : ""}
         </div>
       </div>
-      <div class="sub-mono">№ ${id} · ${escapeHtml((inp && inp.city) || data.estimate.city || "—")}</div>
+      <div class="sub-mono">№ ${id} · ${escapeHtml((inp && inp.city) || data.estimate.city || "—")}${
+        data.object_id ? ` · <a href="#/object/${data.object_id}" style="color:var(--accent)">Объект №${data.object_id}</a>` : ""}</div>
       <div class="detail">
         <div class="left">
           <details class="card" ${calculated ? "" : "open"}>
@@ -839,6 +855,187 @@ function promptBlock(p) {
       </div></div>
     <textarea data-prompt="${escapeAttr(p.key)}" style="min-height:140px">${escapeHtml(p.body)}</textarea>
   </div>`;
+}
+
+// ───────────────────────── objects (SP1) ─────────────────────────
+const CITY_CENTER = { "Алматы": [43.238, 76.889], "Астана": [51.128, 71.430] };
+
+// Leaflet подключён через <script defer>, а app.js исполняется раньше него.
+// При прямом заходе/обновлении на #/objects карта рендерится до загрузки L —
+// ждём, пока Leaflet и leaflet-draw станут доступны.
+function ensureLeaflet() {
+  return new Promise((resolve) => {
+    const ready = () => window.L && window.L.map && window.L.Control && window.L.Control.Draw;
+    if (ready()) return resolve();
+    const t = setInterval(() => { if (ready()) { clearInterval(t); resolve(); } }, 30);
+  });
+}
+
+function baseLayers() {
+  const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: "© OpenStreetMap" });
+  const sat = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "© Esri" });
+  return { "Схема": osm, "Спутник": sat };
+}
+
+let DRAWN = null; // {polygon, lat, lon}
+
+async function viewObjects() {
+  await ensureLeaflet();
+  APP().innerHTML = `
+    <div class="page">
+      <div class="page-head"><h1 class="title">Объекты</h1>
+        <select id="citySel" class="ver-select" style="margin-left:auto;width:160px">
+          <option>Алматы</option><option>Астана</option></select></div>
+      <div class="subtitle">Нарисуйте контур участка на карте (инструмент «прямоугольник»), затем создайте объект.</div>
+      <div id="map" class="map"></div>
+      <div id="objForm"></div>
+      <div id="objList"></div>
+    </div>`;
+  const layers = baseLayers();
+  const map = L.map("map", { layers: [layers["Схема"]] }).setView(CITY_CENTER["Алматы"], 12);
+  L.control.layers(layers).addTo(map);
+  const drawn = new L.FeatureGroup().addTo(map);
+  map.addControl(new L.Control.Draw({
+    draw: { polygon: false, polyline: false, circle: false, marker: false,
+            circlemarker: false, rectangle: {} },
+    edit: { featureGroup: drawn, edit: false, remove: true },
+  }));
+  map.on(L.Draw.Event.CREATED, (e) => {
+    drawn.clearLayers(); drawn.addLayer(e.layer);
+    const gj = e.layer.toGeoJSON().geometry;       // Polygon
+    const c = e.layer.getBounds().getCenter();
+    DRAWN = { polygon: gj, lat: c.lat, lon: c.lng };
+    renderObjForm();
+  });
+  document.getElementById("citySel").addEventListener("change", (ev) =>
+    map.setView(CITY_CENTER[ev.target.value] || CITY_CENTER["Алматы"], 12));
+  renderObjForm();
+  await drawObjList();
+}
+
+function renderObjForm() {
+  const el = document.getElementById("objForm");
+  if (!DRAWN) { el.innerHTML = `<div class="hint">Участок ещё не нарисован.</div>`; return; }
+  el.innerHTML = `<div class="obj-form">
+    <div class="field"><label>Название</label><input id="objName" type="text" value="Новый объект"></div>
+    <div class="field"><label>Город</label><select id="objCity"><option>Алматы</option><option>Астана</option></select></div>
+    <button class="btn primary" id="objSave">Создать объект</button>
+    <span class="hint">центр: ${DRAWN.lat.toFixed(5)}, ${DRAWN.lon.toFixed(5)}</span></div>`;
+  document.getElementById("objCity").value = document.getElementById("citySel").value;
+  document.getElementById("objSave").addEventListener("click", async () => {
+    const { id } = await Api.createObject({
+      name: document.getElementById("objName").value,
+      city: document.getElementById("objCity").value,
+      lat: DRAWN.lat, lon: DRAWN.lon, polygon: DRAWN.polygon });
+    DRAWN = null;
+    toast("Объект создан");
+    location.hash = `#/object/${id}`;
+  });
+}
+
+async function drawObjList() {
+  const items = await Api.listObjects();
+  const el = document.getElementById("objList");
+  if (!items.length) { el.innerHTML = `<div class="empty">Объектов пока нет.</div>`; return; }
+  el.innerHTML = `<div class="list">` + items.map((o) => `<div class="row" data-id="${o.id}">
+    <div class="code">№ ${o.id}</div>
+    <div class="main"><div class="name">${escapeHtml(o.name)}</div>
+      <div class="meta">${escapeHtml(o.city)} · ${money(o.area_m2)} м² · смет: ${o.estimate_count}</div></div>
+    <div class="status">${statusBadge(o.status === "selected" ? "calculated" : "draft")}</div>
+    <button class="del" data-del="${o.id}" title="Удалить">✕</button></div>`).join("") + `</div>`;
+  el.querySelectorAll(".row").forEach((r) => r.addEventListener("click", (ev) => {
+    if (ev.target.dataset.del) return;
+    location.hash = `#/object/${r.dataset.id}`;
+  }));
+  el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    if (!confirm("Удалить объект? Привязанные сметы останутся.")) return;
+    await Api.deleteObject(b.dataset.del); toast("Объект удалён"); drawObjList();
+  }));
+}
+
+async function viewObject(id) {
+  await ensureLeaflet();
+  const data = await Api.getObject(id);
+  const o = data.object;
+  APP().innerHTML = `
+    <div class="page">
+      <div class="breadcrumb"><a href="#/objects">Объекты</a> / ${escapeHtml(o.name)}</div>
+      <div class="title-row"><input class="title-edit" id="objTitle" value="${escapeAttr(o.name)}">
+        ${statusBadge(o.status === "selected" ? "calculated" : "draft")}</div>
+      <div class="sub-mono">№ ${o.id} · ${escapeHtml(o.city)} · ${money(o.area_m2)} м²</div>
+      <div class="detail"><div class="left">
+        <div id="omap" class="map-mini"></div>
+        <div id="conceptBox"></div>
+        <div class="card"><h3>Сметы объекта</h3><div id="objEsts"></div></div>
+      </div></div>
+    </div>`;
+  // карта с контуром
+  const layers = baseLayers();
+  const map = L.map("omap", { layers: [layers["Спутник"]] }).setView([o.lat, o.lon], 16);
+  L.control.layers(layers).addTo(map);
+  if (data.polygon) {
+    const gj = L.geoJSON(data.polygon, { style: { color: "#2C5BA8", weight: 2 } }).addTo(map);
+    map.fitBounds(gj.getBounds(), { padding: [20, 20] });
+  } else { L.marker([o.lat, o.lon]).addTo(map); }
+
+  document.getElementById("objTitle").addEventListener("change", async (ev) => {
+    await Api.patchObject(id, { name: ev.target.value }); toast("Сохранено");
+  });
+
+  // список смет объекта
+  const estsEl = document.getElementById("objEsts");
+  estsEl.innerHTML = data.estimates.length
+    ? data.estimates.map((e) => `<div class="row" data-eid="${e.id}">
+        <div class="main"><div class="name">${escapeHtml(e.name)}</div></div>
+        <div class="amount"><div class="total">${e.status === "calculated" ? money(e.total) + " ₸" : "—"}</div></div>
+      </div>`).join("")
+    : `<div class="hint">Смет ещё нет — создайте из концепта ниже.</div>`;
+  estsEl.querySelectorAll("[data-eid]").forEach((r) =>
+    r.addEventListener("click", () => { location.hash = `#/estimate/${r.dataset.eid}`; }));
+
+  await renderConcept(id, o.city);
+}
+
+async function renderConcept(id, city) {
+  const box = document.getElementById("conceptBox");
+  box.innerHTML = `<div class="concept-panel"><h3>Концепт здания</h3>
+    <div class="obj-form">
+      <div class="field"><label>Тип объекта</label><select id="cType">
+        <option>Жилой дом</option><option>Общественное здание</option><option>Промышленное здание</option></select></div>
+      <button class="btn" id="cReload">Предложить</button>
+    </div>
+    <div id="cFields" class="hint">Нажмите «Предложить», чтобы система рассчитала параметры под участок.</div>
+    <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
+  </div>`;
+  let concept = null;
+  const load = async () => {
+    concept = await Api.objectConcept(id, document.getElementById("cType").value);
+    document.getElementById("cFields").innerHTML = `<div class="grid">
+      ${cField("Этажность", "floors", concept.floors)}
+      ${cField("Габарит длина, м", "building_length", concept.building_length)}
+      ${cField("Габарит ширина, м", "building_width", concept.building_width)}
+      ${cField("Общая площадь, м²", "total_area", concept.total_area)}
+    </div>`;
+    document.getElementById("cToEstimate").disabled = false;
+  };
+  document.getElementById("cReload").addEventListener("click", load);
+  document.getElementById("cToEstimate").addEventListener("click", async () => {
+    document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
+      concept[el.dataset.ck] = Number(el.value || 0);
+    });
+    const { estimate_id } = await Api.objectCreateEstimate(id, concept);
+    toast("Смета создана из концепта");
+    location.hash = `#/estimate/${estimate_id}`;
+  });
+  await load();
+}
+function cField(label, key, val) {
+  return `<div class="field"><label>${label}</label>
+    <input type="number" step="0.1" data-ck="${key}" value="${escapeAttr(val)}"></div>`;
 }
 
 // ───────────────────────── init ─────────────────────────
