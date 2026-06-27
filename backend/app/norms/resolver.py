@@ -207,7 +207,7 @@ def resolve_norm_profile(
     if not inp.demo_mode:
         progress("norms_llm", "Извлечение норм через LLM по системному промпту РК")
         try:
-            llm_params, llm_sources, web_links = extractor.extract_params(inp, documents)
+            llm_params, llm_sources, web_links = extractor.extract_params(db, inp, documents)
             for cat, p in llm_params.items():
                 params[cat] = _better(params.get(cat, p), p) if cat in params else p
             _persist_llm_rules(db, inp, llm_params, docs_by_code)

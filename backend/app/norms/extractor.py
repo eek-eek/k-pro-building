@@ -69,19 +69,22 @@ def build_user_prompt(inp: BuildingInput, documents: list[tuple]) -> str:
 
 
 def extract_params(
-    inp: BuildingInput, documents: list[tuple]
+    db, inp: BuildingInput, documents: list[tuple]
 ) -> tuple[dict[str, NormParam], list[dict], list[dict]]:
     """Вызвать LLM и вернуть (params, sources, web_links).
 
     Бросает LLMUnavailable, если провайдер недоступен — резолвер уйдёт в дефолты.
     """
+    from ..prompts import get_prompt  # local import avoids circular import
+
     provider = get_provider()
     if not provider.available:
         raise LLMUnavailable(f"Провайдер {provider.name} недоступен")
 
     user = build_user_prompt(inp, documents)
+    system = get_prompt(db, "norm_extraction") or SYSTEM_PROMPT
     data, web_links = provider.extract_json(
-        SYSTEM_PROMPT, user, use_search=inp.use_search
+        system, user, use_search=inp.use_search
     )
 
     params: dict[str, NormParam] = {}
