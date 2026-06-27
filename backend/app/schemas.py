@@ -193,6 +193,10 @@ class RollbackRequest(BaseModel):
     version_number: int
 
 
+class ChatPost(BaseModel):
+    message: str = Field(min_length=1)
+
+
 def to_jsonable(obj: Any) -> Any:
     """Рекурсивная сериализация Pydantic-моделей в JSON-совместимый вид."""
     if isinstance(obj, BaseModel):

@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..calc import build_estimate, recompute_estimate
+from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
 from ..config import get_settings
 from ..database import get_db
 from ..jobs import job_manager
 from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem
 from ..norms import resolve_norm_profile
 from ..schemas import (
-    BuildingInput, EstimateCard, EstimateCreate, EstimatePatch,
+    BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
     EstimateResult, JobStatus, ManualEditRequest, RollbackRequest, to_jsonable,
 )
 from ..versioning import create_version, summarize_diff
@@ -259,3 +260,33 @@ def list_prices(db: Session = Depends(get_db)) -> list[dict]:
         }
         for i in items
     ]
+
+
+@router.get("/estimates/{estimate_id}/chat")
+def list_chat(estimate_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    if db.get(Estimate, estimate_id) is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    rows = db.scalars(
+        select(ChatMessage).where(ChatMessage.estimate_id == estimate_id)
+        .order_by(ChatMessage.id)
+    ).all()
+    vmap = {v.id: v.version_number for v in db.scalars(
+        select(EstimateVersion).where(EstimateVersion.estimate_id == estimate_id)).all()}
+    return [{"role": m.role, "content": m.content,
+             "version_number": vmap.get(m.version_id) if m.version_id is not None else None,
+             "created_at": m.created_at.isoformat(timespec="seconds")} for m in rows]
+
+
+@router.post("/estimates/{estimate_id}/chat")
+def post_chat(estimate_id: int, body: ChatPost, db: Session = Depends(get_db)) -> dict:
+    """Sync handler → runs in FastAPI threadpool, so the blocking LLM call does
+    not block the event loop and the request session stays on one thread."""
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    try:
+        return run_chat_edit(db, est, body.message)
+    except ChatUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ChatEditError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
