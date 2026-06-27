@@ -325,10 +325,17 @@ function renderResult(r) {
       r.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("") + `</ul></div>`);
   }
   if (r.sources && r.sources.length) {
-    parts.push(`<div class="card"><h3>Нормативные источники РК</h3><ul class="plain src">` +
+    const unconf = r.sources.filter((s) => !s.confirmed).length;
+    parts.push(`<div class="card"><h3>Нормативные источники РК</h3>
+      <div class="hint">Сид-реестр норм РК, подобранный по типу объекта (${r.sources.length} док.).
+      «не проверено» = не подтверждено онлайн-поиском${unconf ? ` (${unconf} из ${r.sources.length})` : ""}.
+      Чтобы подтвердить и дополнить список — включите «Искать актуальные нормы РК» и провайдера с ключом в Настройках.</div>
+      <ul class="plain src">` +
       r.sources.map((s) => {
         const link = s.url ? `<a href="${escapeAttr(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.code)}</a>` : escapeHtml(s.code);
-        const tag = s.confirmed ? "" : ` <span class="badge">не подтверждено</span>`;
+        const tag = s.confirmed
+          ? ` <span class="sbadge ok" style="font-size:10px">проверено</span>`
+          : ` <span class="badge">не проверено</span>`;
         return `<li>${link} — ${escapeHtml(s.title)}${tag}</li>`;
       }).join("") + `</ul></div>`);
   }
@@ -451,7 +458,9 @@ function renderLines(r) {
       ? `<span class="price">${money(ln[key])}</span>`
       : `<input class="cell-edit" data-li="${i}" data-key="${key}" value="${escapeAttr(ln[key])}">`;
     const tog = hasRes ? `<span class="tog" data-tog="${i}">${expanded ? "▾" : "▸"}</span> ` : "";
-    const lineTotal = hasRes ? previewTotal(ln) : ln.total;
+    const lineTotal = hasRes ? previewTotal(ln)
+      : Math.round((Number(ln.quantity) || 0) *
+          ((Number(ln.material_price) || 0) + (Number(ln.labor_price) || 0) + (Number(ln.machine_price) || 0)));
     rows.push(`<tr class="${ln.needs_review ? "review" : ""}">
       <td class="no">${escapeHtml(ln.no)}</td>
       <td>${tog}${escapeHtml(ln.title)}${ln.needs_review ? ' <span class="badge">проверить</span>' : ""}</td>
@@ -528,7 +537,8 @@ function renderTotals(t) {
 async function saveManualEdit() {
   syncEdits();
   try {
-    await Api.manualEdit(DETAIL.id, DETAIL.lines);
+    const r = await Api.manualEdit(DETAIL.id, DETAIL.lines);
+    if (r && r.unchanged) { toast("Изменений нет — новая версия не создана"); return; }
     toast("Правки сохранены — создана новая версия");
     render();
   } catch (e) { toast(e.detail || "Ошибка сохранения", true); }

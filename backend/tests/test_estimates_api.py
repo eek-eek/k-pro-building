@@ -45,3 +45,22 @@ def test_versions_manual_edit_and_rollback():
     assert r.json()["version_number"] == 3
     cur = client.get(f"/api/estimates/{eid}").json()["current_version"]
     assert cur["result"]["totals"]["grand_total"] == v1["result"]["totals"]["grand_total"]
+
+
+def test_manual_edit_noop_does_not_create_version():
+    eid = _calculated_estimate()
+    v1 = client.get(f"/api/estimates/{eid}").json()["current_version"]
+    lines = v1["result"]["lines"]
+    # сохраняем без единой правки
+    r = client.post(f"/api/estimates/{eid}/manual-edit", json={"lines": lines})
+    assert r.status_code == 200
+    assert r.json().get("unchanged") is True
+    assert r.json()["version_number"] == v1["version_number"]   # версия не выросла
+    assert [v["version_number"] for v in client.get(f"/api/estimates/{eid}/versions").json()] == [1]
+
+    # а реальная правка — создаёт версию 2
+    target = next(l for l in lines if l["no"] != "1.1")
+    target["quantity"] = target["quantity"] + 1
+    r2 = client.post(f"/api/estimates/{eid}/manual-edit", json={"lines": lines})
+    assert r2.json().get("unchanged") is not True
+    assert r2.json()["version_number"] == 2

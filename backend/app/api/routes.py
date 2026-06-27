@@ -234,10 +234,18 @@ def manual_edit(estimate_id: int, body: ManualEditRequest,
     prev = EstimateResult(**est.current_version.result)
     inp = body.input or BuildingInput(**est.current_version.input)
     new_result = recompute_estimate(prev, body.lines, inp)
+    new_json = to_jsonable(new_result)
+    cur = est.current_version.result
+    # Ничего не изменилось — не плодим версию (recompute детерминирован/идемпотентен).
+    if (new_json["lines"] == cur.get("lines")
+            and new_json["totals"] == cur.get("totals")
+            and new_json["section_totals"] == cur.get("section_totals")):
+        return {"version_number": est.current_version.version_number,
+                "result": cur, "unchanged": True}
     summary = summarize_diff(prev, new_result)
     version = create_version(db, est, inp, new_result, source="manual_edit", summary=summary)
     db.commit()
-    return {"version_number": version.version_number, "result": to_jsonable(new_result)}
+    return {"version_number": version.version_number, "result": new_json}
 
 
 @router.get("/estimates/{estimate_id}/recommendations")
