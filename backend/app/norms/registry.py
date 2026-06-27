@@ -2,6 +2,10 @@
 
 Каждый документ помечен типами объектов, к которым он применим. Типы совпадают
 с вариантами в интерфейсе (Жилой дом, Офис, Склад, …). '*' — применим ко всем.
+
+URL проверены на доступность (verify-norms). Источники: официальная база
+adilet.zan.kz и ИС «Параграф» (prg.kz); часть прежних ссылок на ksm.kz/egfntd
+устарела (404) и заменена на рабочие.
 """
 from __future__ import annotations
 
@@ -20,14 +24,14 @@ SEED_DOCUMENTS: list[tuple[str, str, str, str, list[str]]] = [
         "СН РК (перечень)",
         "Строительные нормы Республики Казахстан — официальный перечень",
         "СН РК",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/4.php",
+        "https://adilet.zan.kz/rus/docs/V1800017157",
         ["*"],
     ),
     (
         "СНиП РК (перечень)",
         "Строительные нормы и правила Республики Казахстан — официальный перечень",
         "СНиП",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/5.php",
+        "https://smeta-kz.com/normativy-rk/gradostroit-zdaniya-i-sooruzh/",
         ["*"],
     ),
     # ── Сметное ценообразование ──
@@ -42,14 +46,14 @@ SEED_DOCUMENTS: list[tuple[str, str, str, str, list[str]]] = [
         "СН РК 8.02-04-2002",
         "Сборник сметных норм и расценок на строительные работы",
         "СН РК",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/4.php",
+        "https://adilet.zan.kz/rus/docs/W22IRW00223",
         ["*"],
     ),
     (
         "СН РК 8.02-05-2002",
         "Сборник сметных цен на строительные материалы, изделия и конструкции",
         "СН РК",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/4.php",
+        "https://prg.kz/document/?doc_id=31238632",
         ["*"],
     ),
     # ── Жилые ──
@@ -57,21 +61,21 @@ SEED_DOCUMENTS: list[tuple[str, str, str, str, list[str]]] = [
         "СН РК 3.02-01-2023",
         "Здания жилые многоквартирные",
         "СН РК",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/4.php",
+        "https://prg.kz/document/?doc_id=35983047",
         ["Жилой дом"],
     ),
     (
         "СН РК 3.02-02-2023",
         "Проектирование одноквартирных жилых домов и их инженерных систем",
         "СН РК",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/4.php",
+        "https://prg.kz/document/?doc_id=34954415",
         ["Жилой дом"],
     ),
     (
         "СНиП РК 3.02-43-2007",
         "Жилые здания",
         "СНиП",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/5.php",
+        "https://prg.kz/document/?doc_id=30151907",
         ["Жилой дом"],
     ),
     # ── Общественные (офис, коммерция) ──
@@ -86,7 +90,7 @@ SEED_DOCUMENTS: list[tuple[str, str, str, str, list[str]]] = [
         "СНиП РК 3.02-02-2009",
         "Общественные здания и сооружения",
         "СНиП",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/5.php",
+        "https://prg.kz/document/?doc_id=30816451",
         ["Офис", "Коммерческое помещение"],
     ),
     # ── Производственные, склады ──
@@ -94,14 +98,14 @@ SEED_DOCUMENTS: list[tuple[str, str, str, str, list[str]]] = [
         "СНиП РК 3.02-09-2010",
         "Производственные здания",
         "СНиП",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/5.php",
+        "https://prg.kz/document/?doc_id=31029092",
         ["Производственный объект", "Склад"],
     ),
     (
         "СН РК 3.02-31-2019",
         "Здания и сооружения для хранения и переработки сельхозпродукции",
         "СН РК",
-        "https://new-shop.ksm.kz/egfntd/ntdgo/kds/4.php",
+        "https://prg.kz/document/?doc_id=31713776",
         ["Склад", "Производственный объект"],
     ),
     # ── Реконструкция / ремонт ──

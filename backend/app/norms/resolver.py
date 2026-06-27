@@ -51,7 +51,9 @@ def _better(a: NormParam, b: NormParam) -> NormParam:
 
 
 def ensure_documents(db: Session, object_type: str) -> list[NormDocument]:
-    """Засеять (idempotent) и вернуть документы для типа объекта."""
+    """Засеять/синхронизировать (idempotent) и вернуть документы для типа объекта.
+    Реестр — источник истины: реестровые поля (URL/заголовок/тип/типы объектов)
+    обновляются на существующих записях, если изменились (напр. починили ссылку)."""
     result: list[NormDocument] = []
     for code, title, doc_type, url, obj_types in documents_for(object_type):
         doc = db.scalar(select(NormDocument).where(NormDocument.code == code))
@@ -66,6 +68,11 @@ def ensure_documents(db: Session, object_type: str) -> list[NormDocument]:
             )
             db.add(doc)
             db.flush()
+        elif (doc.url, doc.title, doc.doc_type, doc.object_types) != (url, title, doc_type, obj_types):
+            doc.url = url
+            doc.title = title
+            doc.doc_type = doc_type
+            doc.object_types = obj_types
         result.append(doc)
     db.commit()
     return result
