@@ -1,6 +1,7 @@
 """REST + SSE эндпоинты."""
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import math
 
@@ -25,13 +26,19 @@ from ..prompts import PROMPT_DEFAULTS
 from ..schemas import (
     BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
     EstimateResult, JobStatus, ManualEditRequest, NormSource,
-    ObjectCard, ObjectCreate, ObjectPatch, RecommendationAdd, RollbackRequest,
+    ObjectCard, ObjectCreate, ObjectPatch, RecommendationAdd, RollbackRequest, ZoneVerdict,
     to_jsonable, SettingsUpdate, TestConnectionRequest, PromptUpdate, SuggestPricesRequest,
 )
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
 from ..versioning import create_version, summarize_diff
+from ..zoning import get_zoning_provider
+from ..zoning.wfs import WFS_BASE, LAND_PLOTS, WATER_LAYER_BY_CITY
 
 router = APIRouter(prefix="/api")
+
+
+def _utcnow_dt() -> _dt.datetime:
+    return _dt.datetime.now(_dt.timezone.utc)
 
 
 @router.get("/health")
@@ -541,6 +548,11 @@ def get_object(object_id: int, db: Session = Depends(get_db)) -> dict:
         "object": _object_card(db, obj).model_dump(),
         "polygon": obj.polygon,
         "notes": obj.notes,
+        "zone_status": obj.zone_status,
+        "zone_land_use": obj.zone_land_use or "",
+        "zone_kad_nomer": obj.zone_kad_nomer or "",
+        "zone_note": obj.zone_note or "",
+        "zone_checked_at": obj.zone_checked_at.isoformat(timespec="seconds") if obj.zone_checked_at else None,
         "estimates": [{"id": e.id, "name": e.name, "status": e.status,
                        "total": (e.current_version.total if e.current_version else 0.0)}
                       for e in ests],
@@ -615,3 +627,30 @@ def object_create_estimate(object_id: int, body: BuildingInput | None = Body(Non
     version = create_version(db, est, inp, result, source="initial")
     db.commit()
     return {"estimate_id": est.id, "version_number": version.version_number}
+
+
+@router.post("/objects/{object_id}/check-zone")
+def check_zone(object_id: int, db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    # Объект не несёт object_type (его несёт смета) — для сверки назначения берём
+    # типовой «Жилой дом»; эвристика консервативна, ложных тревог не плодит.
+    verdict = get_zoning_provider().check(obj.lat, obj.lon, "Жилой дом", obj.city)
+    obj.zone_status = verdict.status
+    obj.zone_land_use = verdict.land_use
+    obj.zone_kad_nomer = verdict.kad_nomer
+    obj.zone_note = verdict.note
+    obj.zone_checked_at = _utcnow_dt()
+    db.commit()
+    verdict.checked_at = obj.zone_checked_at.isoformat(timespec="seconds")
+    return to_jsonable(verdict)
+
+
+@router.get("/zoning/wms")
+def zoning_wms(city: str = "Алматы") -> dict:
+    layers = [LAND_PLOTS]
+    water = WATER_LAYER_BY_CITY.get(city)
+    if water:
+        layers.append(water)
+    return {"url": WFS_BASE, "layers": ",".join(layers), "format": "image/png", "transparent": True}
