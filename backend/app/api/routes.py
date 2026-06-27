@@ -12,12 +12,13 @@ from ..calc import build_estimate, recompute_estimate
 from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
 from ..database import get_db
 from ..jobs import job_manager
-from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem
+from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
 from ..norms import resolve_norm_profile
+from ..prompts import PROMPT_DEFAULTS
 from ..schemas import (
     BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
     EstimateResult, JobStatus, ManualEditRequest, RollbackRequest, to_jsonable,
-    SettingsUpdate, TestConnectionRequest,
+    SettingsUpdate, TestConnectionRequest, PromptUpdate,
 )
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
 from ..versioning import create_version, summarize_diff
@@ -328,3 +329,35 @@ def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db)) -> dic
 def test_connection_api(body: TestConnectionRequest, db: Session = Depends(get_db)) -> dict:
     ok, message = run_test_provider(db, body.provider, body.api_key, body.model)
     return {"ok": ok, "message": message}
+
+
+@router.get("/prompts")
+def list_prompts(db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.scalars(select(Prompt).order_by(Prompt.key)).all()
+    return [{"key": p.key, "title": p.title, "description": p.description,
+             "body": p.body, "is_custom": p.is_custom} for p in rows]
+
+
+@router.put("/prompts/{key}")
+def update_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Prompt).where(Prompt.key == key))
+    if row is None:
+        raise HTTPException(status_code=404, detail="prompt not found")
+    row.body = body.body
+    row.is_custom = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/prompts/{key}/reset")
+def reset_prompt(key: str, db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Prompt).where(Prompt.key == key))
+    if row is None:
+        raise HTTPException(status_code=404, detail="prompt not found")
+    default = PROMPT_DEFAULTS.get(key)
+    if default is None:
+        raise HTTPException(status_code=404, detail="no default for prompt")
+    row.body = default["body"]
+    row.is_custom = False
+    db.commit()
+    return {"ok": True}

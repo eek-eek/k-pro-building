@@ -210,6 +210,10 @@ class TestConnectionRequest(BaseModel):
     model: Optional[str] = None
 
 
+class PromptUpdate(BaseModel):
+    body: str = Field(min_length=1)
+
+
 def to_jsonable(obj: Any) -> Any:
     """Рекурсивная сериализация Pydantic-моделей в JSON-совместимый вид."""
     if isinstance(obj, BaseModel):
