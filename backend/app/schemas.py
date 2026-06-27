@@ -207,6 +207,10 @@ class RecommendationAdd(BaseModel):
     key: str = Field(min_length=1)
 
 
+class SuggestPricesRequest(BaseModel):
+    source: str = "satu"
+
+
 class ChatPost(BaseModel):
     message: str = Field(min_length=1)
 

@@ -8,17 +8,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
-from ..calc import build_estimate, recompute_estimate
+from ..calc import (
+    build_estimate, recompute_estimate,
+    applicable_recommendations, build_recommendation_line,
+)
 from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
 from ..database import get_db
 from ..jobs import job_manager
 from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
 from ..norms import resolve_norm_profile
+from ..pricesource import get_price_source, available_sources
 from ..prompts import PROMPT_DEFAULTS
 from ..schemas import (
     BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
-    EstimateResult, JobStatus, ManualEditRequest, RollbackRequest, to_jsonable,
-    SettingsUpdate, TestConnectionRequest, PromptUpdate,
+    EstimateResult, JobStatus, ManualEditRequest, RecommendationAdd, RollbackRequest,
+    to_jsonable, SettingsUpdate, TestConnectionRequest, PromptUpdate, SuggestPricesRequest,
 )
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
 from ..versioning import create_version, summarize_diff
@@ -234,6 +238,65 @@ def manual_edit(estimate_id: int, body: ManualEditRequest,
     version = create_version(db, est, inp, new_result, source="manual_edit", summary=summary)
     db.commit()
     return {"version_number": version.version_number, "result": to_jsonable(new_result)}
+
+
+@router.get("/estimates/{estimate_id}/recommendations")
+def list_recommendations(estimate_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """Ещё не учтённые типовые позиции по нормам РК с уже рассчитанной стоимостью."""
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        return []
+    result = EstimateResult(**est.current_version.result)
+    inp = BuildingInput(**est.current_version.input)
+    return applicable_recommendations(inp, result)
+
+
+@router.post("/estimates/{estimate_id}/recommendations")
+def add_recommendation(estimate_id: int, body: RecommendationAdd,
+                       db: Session = Depends(get_db)) -> dict:
+    """Добавить рекомендацию в смету: сервер сам считает объём и цены по укрупнённым
+    показателям, дописывает строку и пересчитывает итоги (новая версия)."""
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        raise HTTPException(status_code=404, detail="estimate not calculated")
+    prev = EstimateResult(**est.current_version.result)
+    inp = BuildingInput(**est.current_version.input)
+    try:
+        new_line = build_recommendation_line(body.key, inp, prev)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown recommendation")
+    new_result = recompute_estimate(prev, list(prev.lines) + [new_line], inp)
+    summary = f"рекомендация: {new_line.title} ({summarize_diff(prev, new_result)})"
+    version = create_version(db, est, inp, new_result, source="manual_edit", summary=summary)
+    db.commit()
+    return {"version_number": version.version_number, "result": to_jsonable(new_result)}
+
+
+@router.get("/price-sources")
+def list_price_sources() -> list[dict]:
+    return available_sources()
+
+
+@router.post("/estimates/{estimate_id}/suggest-material-prices")
+def suggest_material_prices(estimate_id: int, body: SuggestPricesRequest,
+                            db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        raise HTTPException(status_code=404, detail="estimate not calculated")
+    result = EstimateResult(**est.current_version.result)
+    codes: list[str] = []
+    seen: set[str] = set()
+    for ln in result.lines:
+        for r in (ln.resources or []):
+            if r.kind == "material" and r.code not in seen:
+                seen.add(r.code)
+                codes.append(r.code)
+    quotes = get_price_source(body.source).quote_materials(codes)
+    return {
+        "source": body.source,
+        "suggestions": {c: {"price": q.price, "source": q.source, "note": q.note}
+                        for c, q in quotes.items()},
+    }
 
 
 @router.post("/estimates/{estimate_id}/rollback")
