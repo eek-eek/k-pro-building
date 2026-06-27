@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from ..llm import get_provider
 from ..llm.base import LLMUnavailable
 from ..schemas import BuildingInput, NormParam
 from .defaults import CATEGORY_META
+
+if TYPE_CHECKING:
+    from ..models import NormDocument
 
 # Системный промпт построен на методике из akty_i_trebovaniya_po_tipam_obektov_rk.md:
 # от общего техрегламента → к профильным СН РК/СП РК/СНиП → к ГОСТ/СТ РК на материалы.
@@ -40,8 +44,8 @@ def _category_brief() -> str:
     return "\n".join(lines)
 
 
-def build_user_prompt(inp: BuildingInput, documents: list[tuple]) -> str:
-    docs = "\n".join(f"  - {d[0]} — {d[1]} ({d[3]})" for d in documents)
+def build_user_prompt(inp: BuildingInput, documents: list["NormDocument"]) -> str:
+    docs = "\n".join(f"  - {d.code} — {d.title} ({d.url})" for d in documents)
     return f"""Объект:
 - Тип: {inp.object_type}
 - Регион: {inp.city}
@@ -69,7 +73,7 @@ def build_user_prompt(inp: BuildingInput, documents: list[tuple]) -> str:
 
 
 def extract_params(
-    db, inp: BuildingInput, documents: list[tuple]
+    db, inp: BuildingInput, documents: list["NormDocument"]
 ) -> tuple[dict[str, NormParam], list[dict], list[dict]]:
     """Вызвать LLM и вернуть (params, sources, web_links).
 
