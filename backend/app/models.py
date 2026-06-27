@@ -4,7 +4,10 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -88,15 +91,107 @@ class PriceItem(Base):
 
 
 class Estimate(Base):
-    """Сохранённый расчёт сметы."""
+    """Контейнер версионируемого проекта сметы."""
 
     __tablename__ = "estimates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    object_type: Mapped[str] = mapped_column(String(64), index=True, default="")
+    city: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    current_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("estimate_versions.id", use_alter=True, ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+    versions: Mapped[list["EstimateVersion"]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+        order_by="EstimateVersion.version_number",
+        foreign_keys="EstimateVersion.estimate_id",
+    )
+    chat_messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.id",
+    )
+    # back_populates намеренно опущен: циклический FK разрешается через post_update=True
+    current_version: Mapped["EstimateVersion | None"] = relationship(
+        "EstimateVersion", foreign_keys=[current_version_id], post_update=True
+    )
+
+
+class EstimateVersion(Base):
+    """Неизменяемый снимок сметы на один момент времени."""
+
+    __tablename__ = "estimate_versions"
+    __table_args__ = (UniqueConstraint("estimate_id", "version_number"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, index=True)
     input: Mapped[dict[str, Any]] = mapped_column(JSON)
     result: Mapped[dict[str, Any]] = mapped_column(JSON)
     total: Mapped[float] = mapped_column(Float, default=0.0)
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    # Намеренно обязателен (без default): провенанс всегда указывает вызывающий код
+    source: Mapped[str] = mapped_column(String(16), index=True)  # initial|llm_edit|manual_edit|rollback
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+    estimate: Mapped["Estimate"] = relationship(
+        back_populates="versions", foreign_keys=[estimate_id]
+    )
+
+
+class ChatMessage(Base):
+    """Один ход чата внутри сметы."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16))  # user|assistant
+    content: Mapped[str] = mapped_column(Text)
+    # Сырой FK без ORM-связи по замыслу: соединяйте явно в запросах
+    version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("estimate_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+    estimate: Mapped["Estimate"] = relationship(back_populates="chat_messages")
+
+
+class Prompt(Base):
+    """Редактируемый системный промпт, посеянный из значений по умолчанию в коде."""
+
+    __tablename__ = "prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class AppSetting(Base):
+    """Настройка времени выполнения ключ-значение, переопределяющая .env (пустое значение = не задано)."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class Job(Base):
