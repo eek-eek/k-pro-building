@@ -18,3 +18,20 @@ def test_polygon_area_matches_length_times_width():
     length, width = bbox_dims_m(RECT)
     area = polygon_area_m2(RECT)
     assert abs(area - length * width) < 0.15 * (length * width)
+
+
+from app.geo import point_in_polygon
+
+SQUARE = {"type": "Polygon", "coordinates": [[
+    [76.90, 43.24], [76.91, 43.24], [76.91, 43.25], [76.90, 43.25], [76.90, 43.24]]]}
+MULTI = {"type": "MultiPolygon", "coordinates": [SQUARE["coordinates"]]}
+
+
+def test_point_in_polygon_inside_and_outside():
+    assert point_in_polygon(76.905, 43.245, SQUARE) is True
+    assert point_in_polygon(76.80, 43.20, SQUARE) is False
+
+
+def test_point_in_polygon_multipolygon():
+    assert point_in_polygon(76.905, 43.245, MULTI) is True
+    assert point_in_polygon(76.95, 43.30, MULTI) is False
