@@ -10,7 +10,6 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..calc import build_estimate, recompute_estimate
 from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
-from ..config import get_settings
 from ..database import get_db
 from ..jobs import job_manager
 from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem
@@ -18,16 +17,18 @@ from ..norms import resolve_norm_profile
 from ..schemas import (
     BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
     EstimateResult, JobStatus, ManualEditRequest, RollbackRequest, to_jsonable,
+    SettingsUpdate, TestConnectionRequest,
 )
+from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
 from ..versioning import create_version, summarize_diff
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/health")
-def health() -> dict:
-    s = get_settings()
-    return {"status": "ok", "llm_provider": s.llm_provider}
+def health(db: Session = Depends(get_db)) -> dict:
+    eff = get_effective_settings(db)
+    return {"status": "ok", "llm_provider": eff.llm_provider}
 
 
 @router.post("/estimate")
@@ -290,3 +291,40 @@ def post_chat(estimate_id: int, body: ChatPost, db: Session = Depends(get_db)) -
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ChatEditError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/settings")
+def get_settings_api(db: Session = Depends(get_db)) -> dict:
+    eff = get_effective_settings(db)
+    return {
+        "provider": eff.llm_provider,
+        "model": eff.active_model(),
+        "masked_key": mask_key(eff.active_key()),
+        "has_key": bool(eff.active_key()),
+        "use_search": eff.llm_use_search,
+        "catalog": MODEL_CATALOG,
+    }
+
+
+@router.put("/settings")
+def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db)) -> dict:
+    eff = get_effective_settings(db)
+    provider = (body.provider or eff.llm_provider).lower()
+    updates: dict = {}
+    if body.provider is not None:
+        updates["llm_provider"] = provider
+    if body.model is not None:
+        updates[f"{provider}_model"] = body.model
+    if body.use_search is not None:
+        updates["llm_use_search"] = body.use_search
+    if body.api_key is not None and body.api_key != "":
+        if body.api_key != mask_key(getattr(eff, f"{provider}_api_key", "")):
+            updates[f"{provider}_api_key"] = body.api_key
+    save_settings(db, updates)
+    return get_settings_api(db)
+
+
+@router.post("/settings/test")
+def test_connection_api(body: TestConnectionRequest, db: Session = Depends(get_db)) -> dict:
+    ok, message = run_test_provider(db, body.provider, body.api_key, body.model)
+    return {"ok": ok, "message": message}

@@ -197,6 +197,19 @@ class ChatPost(BaseModel):
     message: str = Field(min_length=1)
 
 
+class SettingsUpdate(BaseModel):
+    provider: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    use_search: Optional[bool] = None
+
+
+class TestConnectionRequest(BaseModel):
+    provider: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
 def to_jsonable(obj: Any) -> Any:
     """Рекурсивная сериализация Pydantic-моделей в JSON-совместимый вид."""
     if isinstance(obj, BaseModel):
