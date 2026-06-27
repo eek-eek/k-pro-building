@@ -21,7 +21,7 @@ from ..pricesource import get_price_source, available_sources
 from ..prompts import PROMPT_DEFAULTS
 from ..schemas import (
     BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
-    EstimateResult, JobStatus, ManualEditRequest, RecommendationAdd, RollbackRequest,
+    EstimateResult, JobStatus, ManualEditRequest, NormSource, RecommendationAdd, RollbackRequest,
     to_jsonable, SettingsUpdate, TestConnectionRequest, PromptUpdate, SuggestPricesRequest,
 )
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
@@ -246,6 +246,62 @@ def manual_edit(estimate_id: int, body: ManualEditRequest,
     version = create_version(db, est, inp, new_result, source="manual_edit", summary=summary)
     db.commit()
     return {"version_number": version.version_number, "result": new_json}
+
+
+def _check_link(url: str):
+    """Доступность ссылки: True (2xx/3xx) / False (HTTP 4xx/5xx — битая/устаревшая) /
+    None (таймаут/блокировка — не удалось проверить). GET с браузерным UA и следованием
+    редиректам (HEAD многие гос-сайты не отдают). Проверка SSL-сертификата отключена
+    намеренно: это проба доступности публичной ссылки, а не передача данных — Python на
+    macOS часто не находит системные CA, из-за чего живые сайты (напр. adilet.zan.kz)
+    ложно падали в ошибку."""
+    import ssl
+    import urllib.error
+    import urllib.request
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,*/*",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=6, context=ctx) as r:
+            return 200 <= r.status < 400
+    except urllib.error.HTTPError as e:
+        return False if 400 <= e.code < 600 else None
+    except Exception:
+        return None
+
+
+@router.post("/estimates/{estimate_id}/verify-norms")
+def verify_norms(estimate_id: int, db: Session = Depends(get_db)) -> dict:
+    """Проверка норм: (1) доступность ссылок источников (всегда), (2) подтверждение/
+    дополнение через LLM (если провайдер с ключом). Источники обновляются в текущей
+    версии на месте — без создания новой версии."""
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        raise HTTPException(status_code=404, detail="estimate not calculated")
+    cv = est.current_version
+    try:
+        inp = BuildingInput(**cv.input)
+        inp.use_search = True
+        inp.demo_mode = False  # пытаемся подтвердить через LLM; без ключа — тихо деградирует
+        sources = resolve_norm_profile(db, inp).sources
+    except Exception:
+        sources = [NormSource(**s) for s in cv.result.get("sources", [])]
+    for s in sources:
+        s.link_ok = _check_link(s.url) if s.url else None
+    cv.result = {**cv.result, "sources": [to_jsonable(s) for s in sources]}
+    db.commit()
+    return {
+        "sources": [to_jsonable(s) for s in sources],
+        "checked": len(sources),
+        "confirmed": sum(1 for s in sources if s.confirmed),
+        "links_ok": sum(1 for s in sources if s.link_ok is True),
+        "llm": any(s.confirmed for s in sources),
+    }
 
 
 @router.get("/estimates/{estimate_id}/recommendations")

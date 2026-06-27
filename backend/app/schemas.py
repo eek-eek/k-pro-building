@@ -72,6 +72,7 @@ class NormSource(BaseModel):
     url: str = ""
     status: str = "seed"  # seed|parsed|stub
     confirmed: bool = False
+    link_ok: Optional[bool] = None  # доступность ссылки: True/False/None
 
 
 class NormProfile(BaseModel):

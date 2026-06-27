@@ -55,6 +55,7 @@ const Api = {
   recommendations: (id) => api("GET", `/estimates/${id}/recommendations`),
   addRecommendation: (id, key) => api("POST", `/estimates/${id}/recommendations`, { key }),
   suggestPrices: (id, source) => api("POST", `/estimates/${id}/suggest-material-prices`, { source }),
+  verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
   listChat: (id) => api("GET", `/estimates/${id}/chat`),
@@ -326,17 +327,22 @@ function renderResult(r) {
   }
   if (r.sources && r.sources.length) {
     const unconf = r.sources.filter((s) => !s.confirmed).length;
-    parts.push(`<div class="card"><h3>Нормативные источники РК</h3>
+    parts.push(`<div class="card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <h3 style="margin:0">Нормативные источники РК</h3>
+        <button class="btn sm" id="verifyNormsBtn" style="margin-left:auto" title="Проверить доступность ссылок и подтвердить через ИИ (нужен ключ)">Проверить нормы</button></div>
       <div class="hint">Сид-реестр норм РК, подобранный по типу объекта (${r.sources.length} док.).
       «не проверено» = не подтверждено онлайн-поиском${unconf ? ` (${unconf} из ${r.sources.length})` : ""}.
-      Чтобы подтвердить и дополнить список — включите «Искать актуальные нормы РК» и провайдера с ключом в Настройках.</div>
+      «Проверить нормы» проверяет доступность ссылок и (при провайдере с ключом) подтверждает источники через ИИ.</div>
       <ul class="plain src">` +
       r.sources.map((s) => {
         const link = s.url ? `<a href="${escapeAttr(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.code)}</a>` : escapeHtml(s.code);
         const tag = s.confirmed
           ? ` <span class="sbadge ok" style="font-size:10px">проверено</span>`
           : ` <span class="badge">не проверено</span>`;
-        return `<li>${link} — ${escapeHtml(s.title)}${tag}</li>`;
+        const lk = s.link_ok === true ? ` <span style="color:var(--ok);font-size:12px">✓ ссылка ОК</span>`
+          : s.link_ok === false ? ` <span style="color:var(--danger);font-size:12px">✗ ссылка не открылась</span>` : "";
+        return `<li>${link} — ${escapeHtml(s.title)}${tag}${lk}</li>`;
       }).join("") + `</ul></div>`);
   }
   // editable smeta
@@ -356,8 +362,24 @@ function renderResult(r) {
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
   const satuBtn = document.getElementById("satuBtn");
   if (satuBtn) satuBtn.addEventListener("click", suggestSatuPrices);
+  const vnBtn = document.getElementById("verifyNormsBtn");
+  if (vnBtn) vnBtn.addEventListener("click", verifyNorms);
   wireTable();
   loadRecs();
+}
+
+async function verifyNorms() {
+  const btn = document.getElementById("verifyNormsBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Проверяю…"; }
+  try {
+    const r = await Api.verifyNorms(DETAIL.id);
+    toast(`Ссылок доступно ${r.links_ok}/${r.checked}` +
+      (r.llm ? `, подтверждено ИИ: ${r.confirmed}` : `, ИИ-подтверждение недоступно (нужен провайдер с ключом)`));
+    render();
+  } catch (e) {
+    toast(e.detail || "Ошибка проверки норм", true);
+    if (btn) { btn.disabled = false; btn.textContent = "Проверить нормы"; }
+  }
 }
 
 async function suggestSatuPrices() {

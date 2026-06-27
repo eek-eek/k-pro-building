@@ -64,3 +64,23 @@ def test_manual_edit_noop_does_not_create_version():
     r2 = client.post(f"/api/estimates/{eid}/manual-edit", json={"lines": lines})
     assert r2.json().get("unchanged") is not True
     assert r2.json()["version_number"] == 2
+
+
+def test_verify_norms_checks_links_and_keeps_single_version(monkeypatch):
+    from app.schemas import NormProfile, NormSource
+    eid = _calculated_estimate()
+    cur = client.get(f"/api/estimates/{eid}").json()["current_version"]
+    srcs = [NormSource(**s) for s in cur["result"]["sources"]]
+    # без сети: ссылки = ок; норм-резолв возвращает те же источники
+    monkeypatch.setattr("app.api.routes._check_link", lambda url: True)
+    monkeypatch.setattr("app.api.routes.resolve_norm_profile",
+                        lambda db, inp: NormProfile(signature="x",
+                                                    object_type=inp.object_type, sources=srcs))
+    r = client.post(f"/api/estimates/{eid}/verify-norms")
+    assert r.status_code == 200
+    assert r.json()["checked"] == len(srcs)
+    assert all(s["link_ok"] is True for s in r.json()["sources"] if s["url"])
+    # версия не выросла (обновление источников на месте)
+    assert [v["version_number"] for v in client.get(f"/api/estimates/{eid}/versions").json()] == [1]
+    cur2 = client.get(f"/api/estimates/{eid}").json()["current_version"]
+    assert any(s.get("link_ok") is True for s in cur2["result"]["sources"])
