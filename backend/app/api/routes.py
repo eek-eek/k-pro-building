@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
-from ..calc import build_estimate
+from ..calc import build_estimate, recompute_estimate
 from ..config import get_settings
 from ..database import get_db
 from ..jobs import job_manager
@@ -16,9 +16,9 @@ from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, Price
 from ..norms import resolve_norm_profile
 from ..schemas import (
     BuildingInput, EstimateCard, EstimateCreate, EstimatePatch,
-    EstimateResult, JobStatus, to_jsonable,
+    EstimateResult, JobStatus, ManualEditRequest, RollbackRequest, to_jsonable,
 )
-from ..versioning import create_version
+from ..versioning import create_version, summarize_diff
 
 router = APIRouter(prefix="/api")
 
@@ -183,6 +183,65 @@ def list_norms(db: Session = Depends(get_db)) -> list[dict]:
         }
         for d in docs
     ]
+
+
+@router.get("/estimates/{estimate_id}/versions")
+def list_versions(estimate_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    if db.get(Estimate, estimate_id) is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    rows = db.scalars(
+        select(EstimateVersion).where(EstimateVersion.estimate_id == estimate_id)
+        .order_by(EstimateVersion.version_number)
+    ).all()
+    return [{"version_number": v.version_number, "source": v.source,
+             "summary": v.summary, "total": v.total,
+             "created_at": v.created_at.isoformat(timespec="seconds")} for v in rows]
+
+
+@router.get("/estimates/{estimate_id}/versions/{version_number}")
+def get_version(estimate_id: int, version_number: int,
+                db: Session = Depends(get_db)) -> dict:
+    v = db.scalar(select(EstimateVersion).where(
+        EstimateVersion.estimate_id == estimate_id,
+        EstimateVersion.version_number == version_number))
+    if v is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    return {"version_number": v.version_number, "source": v.source,
+            "input": v.input, "result": v.result, "summary": v.summary}
+
+
+@router.post("/estimates/{estimate_id}/manual-edit")
+def manual_edit(estimate_id: int, body: ManualEditRequest,
+                db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        raise HTTPException(status_code=404, detail="estimate not calculated")
+    prev = EstimateResult(**est.current_version.result)
+    inp = body.input or BuildingInput(**est.current_version.input)
+    new_result = recompute_estimate(prev, body.lines, inp)
+    summary = summarize_diff(prev, new_result)
+    version = create_version(db, est, inp, new_result, source="manual_edit", summary=summary)
+    db.commit()
+    return {"version_number": version.version_number, "result": to_jsonable(new_result)}
+
+
+@router.post("/estimates/{estimate_id}/rollback")
+def rollback(estimate_id: int, body: RollbackRequest,
+             db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    target = db.scalar(select(EstimateVersion).where(
+        EstimateVersion.estimate_id == estimate_id,
+        EstimateVersion.version_number == body.version_number))
+    if target is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    inp = BuildingInput(**target.input)
+    result = EstimateResult(**target.result)
+    version = create_version(db, est, inp, result, source="rollback",
+                             summary=f"откат к версии {body.version_number}")
+    db.commit()
+    return {"version_number": version.version_number, "result": target.result}
 
 
 @router.get("/prices")

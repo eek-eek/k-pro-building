@@ -184,6 +184,15 @@ class EstimatePatch(BaseModel):
     input: Optional[BuildingInput] = None
 
 
+class ManualEditRequest(BaseModel):
+    lines: list[EstimateLine]
+    input: Optional[BuildingInput] = None
+
+
+class RollbackRequest(BaseModel):
+    version_number: int
+
+
 def to_jsonable(obj: Any) -> Any:
     """Рекурсивная сериализация Pydantic-моделей в JSON-совместимый вид."""
     if isinstance(obj, BaseModel):
