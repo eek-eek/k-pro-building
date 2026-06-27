@@ -99,6 +99,15 @@ class VolumeItem(BaseModel):
     needs_review: bool = False
 
 
+class ResourceLine(BaseModel):
+    code: str
+    name: str
+    kind: str  # "material" | "labor" | "machine"
+    unit: str
+    consumption: float
+    price: float = 0.0
+
+
 class EstimateLine(BaseModel):
     no: str
     section: str
@@ -112,6 +121,7 @@ class EstimateLine(BaseModel):
     total: float = 0.0
     comment: str = ""
     needs_review: bool = False
+    resources: list[ResourceLine] = []
 
 
 class EstimateTotals(BaseModel):
@@ -191,6 +201,10 @@ class ManualEditRequest(BaseModel):
 
 class RollbackRequest(BaseModel):
     version_number: int
+
+
+class RecommendationAdd(BaseModel):
+    key: str = Field(min_length=1)
 
 
 class ChatPost(BaseModel):
