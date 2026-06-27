@@ -55,6 +55,15 @@ const Api = {
   recommendations: (id) => api("GET", `/estimates/${id}/recommendations`),
   addRecommendation: (id, key) => api("POST", `/estimates/${id}/recommendations`, { key }),
   suggestPrices: (id, source) => api("POST", `/estimates/${id}/suggest-material-prices`, { source }),
+  listObjects: () => api("GET", "/objects"),
+  createObject: (body) => api("POST", "/objects", body),
+  getObject: (id) => api("GET", `/objects/${id}`),
+  patchObject: (id, patch) => api("PATCH", `/objects/${id}`, patch),
+  deleteObject: (id) => api("DELETE", `/objects/${id}`),
+  objectConcept: (id, object_type, floors) =>
+    api("GET", `/objects/${id}/concept?object_type=${encodeURIComponent(object_type)}` +
+      (floors ? `&floors=${floors}` : "")),
+  objectCreateEstimate: (id, input) => api("POST", `/objects/${id}/estimate`, input),
   verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
@@ -138,11 +147,15 @@ function parseRoute() {
   const h = (location.hash || "#/").replace(/^#/, "");
   const m = h.match(/^\/estimate\/(\d+)/);
   if (m) return { name: "detail", id: Number(m[1]) };
+  const mo = h.match(/^\/object\/(\d+)/);
+  if (mo) return { name: "object", id: Number(mo[1]) };
+  if (h.startsWith("/objects")) return { name: "objects" };
   if (h.startsWith("/settings")) return { name: "settings" };
   return { name: "dashboard" };
 }
 function setActiveNav(route) {
-  const target = route.name === "settings" ? "#/settings" : "#/";
+  const target = route.name === "settings" ? "#/settings"
+    : (route.name === "objects" || route.name === "object") ? "#/objects" : "#/";
   document.querySelectorAll(".nav a.link").forEach((a) =>
     a.classList.toggle("active", a.dataset.nav === target));
 }
@@ -152,6 +165,8 @@ async function render() {
   try {
     if (route.name === "detail") await viewDetail(route.id);
     else if (route.name === "settings") await viewSettings();
+    else if (route.name === "objects") await viewObjects();
+    else if (route.name === "object") await viewObject(route.id);
     else await viewDashboard();
   } catch (e) {
     APP().innerHTML = `<div class="page"><div class="empty">Ошибка: ${escapeHtml(e.detail || e.message || e)}</div></div>`;
