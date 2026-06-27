@@ -266,7 +266,8 @@ async function viewDetail(id) {
           <button class="btn sm" id="exportBtn">Экспорт Word</button>` : ""}
         </div>
       </div>
-      <div class="sub-mono">№ ${id} · ${escapeHtml((inp && inp.city) || data.estimate.city || "—")}</div>
+      <div class="sub-mono">№ ${id} · ${escapeHtml((inp && inp.city) || data.estimate.city || "—")}${
+        data.object_id ? ` · <a href="#/object/${data.object_id}" style="color:var(--accent)">Объект №${data.object_id}</a>` : ""}</div>
       <div class="detail">
         <div class="left">
           <details class="card" ${calculated ? "" : "open"}>
