@@ -4,6 +4,7 @@ from app.database import SessionLocal, engine
 from app.main import app
 from app.seed import run_seed
 from app.models import BuildingObject, Estimate
+from app.zoning import wfs as _wfs
 
 client = TestClient(app)
 
@@ -28,6 +29,14 @@ def test_building_object_table_and_estimate_fk():
         assert est.object_id == obj.id
     finally:
         db.close()
+
+
+def test_building_object_has_zone_columns():
+    run_seed()
+    with engine.begin() as conn:
+        cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(building_objects)")]
+    for c in ("zone_status", "zone_land_use", "zone_kad_nomer", "zone_note", "zone_checked_at"):
+        assert c in cols, f"нет колонки {c}"
 
 
 def test_object_crud():
@@ -70,3 +79,30 @@ def test_deleting_object_keeps_estimate_and_nulls_link():
     full = client.get(f"/api/estimates/{eid}").json()
     assert full["object_id"] is None              # связь обнулена
     assert full["current_version"] is not None    # смета осталась рассчитанной
+
+
+def test_check_zone_saves_verdict(monkeypatch):
+    plot = {"features": [{
+        "geometry": {"type": "MultiPolygon", "coordinates": [[[
+            [76.944, 43.237], [76.946, 43.237], [76.946, 43.239], [76.944, 43.239], [76.944, 43.237]]]]},
+        "properties": {"kad_nomer": "20313005104",
+                       "tsn_ru": "для строительства жилого дома", "squ": 5000}}]}
+    monkeypatch.setattr(_wfs, "_wfs_features",
+                        lambda tn, lat, lon, count=5: plot if tn == "openmap:land_plots" else {"features": []})
+    oid = client.post("/api/objects", json={
+        "name": "Z", "city": "Алматы", "lat": 43.238, "lon": 76.945, "polygon": POLY}).json()["id"]
+    v = client.post(f"/api/objects/{oid}/check-zone").json()
+    assert v["status"] == "allowed" and v["kad_nomer"] == "20313005104"
+    # вердикт сохранён и виден в карточке
+    got = client.get(f"/api/objects/{oid}").json()
+    assert got["zone_status"] == "allowed"
+    assert "жилого" in got["zone_land_use"]
+
+
+def test_check_zone_404_for_missing_object():
+    assert client.post("/api/objects/999999/check-zone").status_code == 404
+
+
+def test_zoning_wms_config():
+    cfg = client.get("/api/zoning/wms", params={"city": "Алматы"}).json()
+    assert cfg["url"] and cfg["layers"]

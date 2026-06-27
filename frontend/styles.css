@@ -339,3 +339,8 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 .obj-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
 .obj-form .field { margin: 0; min-width: 160px; }
 .concept-panel { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 14px 0; background: var(--surface); }
+
+/* ── Проверка зоны (SP2) ── */
+.zone-line { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.zone-warn { color: var(--warn); background: var(--warn-bg); border-radius: var(--radius);
+  padding: 8px 12px; font-size: 13px; margin: 6px 0; }

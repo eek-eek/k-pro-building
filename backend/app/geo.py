@@ -37,3 +37,31 @@ def polygon_area_m2(polygon: dict) -> float:
         x2, y2 = pts[i + 1]
         s += x1 * y2 - x2 * y1
     return round(abs(s) / 2.0, 1)
+
+
+def _ring_contains(lon: float, lat: float, ring: list[list[float]]) -> bool:
+    """Ray-casting: точка (lon,lat) внутри кольца GeoJSON [lon,lat]."""
+    inside = False
+    n = len(ring)
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[j][0], ring[j][1]
+        if ((yi > lat) != (yj > lat)) and (
+            lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi
+        ):
+            inside = not inside
+        j = i
+    return inside
+
+
+def point_in_polygon(lon: float, lat: float, geometry: dict) -> bool:
+    """Содержит ли GeoJSON Polygon/MultiPolygon точку. Внешнее кольцо; дырки
+    игнорируем (для проверки попадания в участок/зону этого достаточно)."""
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates") or []
+    if gtype == "Polygon":
+        return bool(coords) and _ring_contains(lon, lat, coords[0])
+    if gtype == "MultiPolygon":
+        return any(poly and _ring_contains(lon, lat, poly[0]) for poly in coords)
+    return False
