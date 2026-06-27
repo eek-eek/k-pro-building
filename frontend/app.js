@@ -64,6 +64,8 @@ const Api = {
     api("GET", `/objects/${id}/concept?object_type=${encodeURIComponent(object_type)}` +
       (floors ? `&floors=${floors}` : "")),
   objectCreateEstimate: (id, input) => api("POST", `/objects/${id}/estimate`, input),
+  checkZone: (id) => api("POST", `/objects/${id}/check-zone`),
+  zoningWms: (city) => api("GET", `/zoning/wms?city=${encodeURIComponent(city)}`),
   verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
@@ -969,14 +971,27 @@ async function viewObject(id) {
       <div class="sub-mono">№ ${o.id} · ${escapeHtml(o.city)} · ${money(o.area_m2)} м²</div>
       <div class="detail"><div class="left">
         <div id="omap" class="map-mini"></div>
+        <div id="zoneBox"></div>
         <div id="conceptBox"></div>
         <div class="card"><h3>Сметы объекта</h3><div id="objEsts"></div></div>
       </div></div>
     </div>`;
-  // карта с контуром
+  // зональные поля приходят на верхнем уровне ответа — сводим в объект для рендера
+  Object.assign(o, {
+    zone_status: data.zone_status, zone_land_use: data.zone_land_use,
+    zone_kad_nomer: data.zone_kad_nomer, zone_note: data.zone_note,
+    zone_checked_at: data.zone_checked_at,
+  });
+  // карта с контуром + слой кадастра/зон (WMS, переключаемый)
   const layers = baseLayers();
   const map = L.map("omap", { layers: [layers["Спутник"]] }).setView([o.lat, o.lon], 16);
-  L.control.layers(layers).addTo(map);
+  try {
+    const wms = await Api.zoningWms(o.city);
+    const overlay = L.tileLayer.wms(wms.url, {
+      layers: wms.layers, format: wms.format, transparent: true, opacity: 0.5, attribution: "© map.gov.kz",
+    });
+    L.control.layers(layers, { "Кадастр/зоны": overlay }).addTo(map);
+  } catch (e) { L.control.layers(layers).addTo(map); /* нет слоя — не критично */ }
   if (data.polygon) {
     const gj = L.geoJSON(data.polygon, { style: { color: "#2C5BA8", weight: 2 } }).addTo(map);
     map.fitBounds(gj.getBounds(), { padding: [20, 20] });
@@ -997,7 +1012,43 @@ async function viewObject(id) {
   estsEl.querySelectorAll("[data-eid]").forEach((r) =>
     r.addEventListener("click", () => { location.hash = `#/estimate/${r.dataset.eid}`; }));
 
+  renderZone(id, o);
   await renderConcept(id, o.city);
+}
+
+function zoneBadge(status) {
+  const map = { allowed: ["ok", "разрешено"], restricted: ["rejected", "ограничено"], unknown: ["draft", "не проверено"] };
+  const [cls, label] = map[status] || map.unknown;
+  return `<span class="sbadge ${cls}">${label}</span>`;
+}
+
+function zoneDetails(o) {
+  if (!o.zone_status) return "";
+  const rows = [];
+  if (o.zone_kad_nomer) rows.push(`<div class="meta">Кад. номер: <b>${escapeHtml(o.zone_kad_nomer)}</b></div>`);
+  if (o.zone_land_use) rows.push(`<div class="meta">Назначение: ${escapeHtml(o.zone_land_use)}</div>`);
+  if (o.zone_note) rows.push(`<div class="zone-warn">⚠ ${escapeHtml(o.zone_note)}</div>`);
+  rows.push(`<div class="meta muted">Источник: map.gov.kz (WFS)${o.zone_checked_at ? " · " + escapeHtml(o.zone_checked_at) : ""}</div>`);
+  return rows.join("");
+}
+
+function renderZone(id, o) {
+  const box = document.getElementById("zoneBox");
+  const has = o.zone_status;
+  box.innerHTML = `<div class="concept-panel"><h3>Генплан / кадастр</h3>
+    <div class="zone-line">${has ? zoneBadge(o.zone_status) : `<span class="hint">Участок ещё не проверялся.</span>`}
+      <button class="btn ${has ? "" : "accent"}" id="zoneBtn" style="margin-left:auto">${has ? "Перепроверить" : "Проверить участок"}</button></div>
+    <div id="zoneDetails">${zoneDetails(o)}</div></div>`;
+  document.getElementById("zoneBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("zoneBtn"); btn.disabled = true; btn.textContent = "Проверяю…";
+    try {
+      const v = await Api.checkZone(id);
+      Object.assign(o, { zone_status: v.status, zone_land_use: v.land_use,
+        zone_kad_nomer: v.kad_nomer, zone_note: v.note, zone_checked_at: v.checked_at });
+      toast("Проверка выполнена");
+      renderZone(id, o);
+    } catch (e) { toast(e.detail || "Ошибка проверки", true); btn.disabled = false; btn.textContent = "Проверить участок"; }
+  });
 }
 
 async function renderConcept(id, city) {
