@@ -14,6 +14,7 @@ from ..schemas import (
 )
 from .geometry import derive
 from .pricing import get_price
+from .resource_catalog import rollup, snapshot_for
 from .volumes import compute_volumes
 
 # (номер, название раздела, [ключи объёмов], [подстроки для фильтра по видам работ])
@@ -89,8 +90,15 @@ def build_estimate(
             vol = volumes.get(key)
             if vol is None or vol.quantity <= 0:
                 continue
-            price = get_price(db, key, region)
-            unit_cost = price.material + price.labor + price.machine
+            resources = snapshot_for(key)
+            if resources:
+                material_price, labor_price, machine_price = rollup(resources)
+            else:
+                price = get_price(db, key, region)
+                material_price, labor_price, machine_price = (
+                    price.material, price.labor, price.machine
+                )
+            unit_cost = material_price + labor_price + machine_price
             line_total = round(vol.quantity * unit_cost)
             sub_index += 1
             lines.append(
@@ -101,12 +109,13 @@ def build_estimate(
                     norm=vol.norm,
                     unit=vol.unit,
                     quantity=vol.quantity,
-                    material_price=price.material,
-                    labor_price=price.labor,
-                    machine_price=price.machine,
+                    material_price=material_price,
+                    labor_price=labor_price,
+                    machine_price=machine_price,
                     total=line_total,
                     needs_review=vol.needs_review,
                     comment="требует проверки сметчиком" if vol.needs_review else "",
+                    resources=resources,
                 )
             )
             section_sum += line_total
