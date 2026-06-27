@@ -31,6 +31,12 @@ cp .env.example backend/.env      # заполните GEMINI_API_KEY (или д
 Без ключа LLM приложение работает в режиме дефолтных нормативных коэффициентов РК
 (укрупнённые показатели). Поставьте галочку «Демо без LLM» для явного оффлайн-расчёта.
 
+## Развёртывание на сервере
+
+Готовый деплой на VPS (AWS EC2, Ubuntu) — systemd + Caddy (логин/пароль, позже HTTPS):
+см. [`deploy/DEPLOY.md`](deploy/DEPLOY.md). Кратко: `git clone` → `bash deploy/setup.sh`
+→ настроить Caddy. Обновление — `bash deploy/update.sh`.
+
 ## Поток
 
 1. Пользователь вводит атрибуты здания → фронт `POST /api/estimate` → `job_id`.

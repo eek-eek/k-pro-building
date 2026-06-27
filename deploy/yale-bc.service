@@ -1,0 +1,24 @@
+[Unit]
+Description=Yale Building Calculator (FastAPI/uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Пользователь/группа и пути подставляет deploy/setup.sh (по умолчанию ubuntu).
+User=ubuntu
+Group=ubuntu
+# WorkingDirectory ОБЯЗАН быть .../backend: оттуда читаются ./.env и ./data/ (SQLite).
+WorkingDirectory=/home/ubuntu/k-pro-building/backend
+ExecStart=/home/ubuntu/k-pro-building/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# Один воркер намеренно: БД — SQLite (несколько воркеров → "database is locked").
+Restart=always
+RestartSec=3
+
+# Базовая изоляция
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
