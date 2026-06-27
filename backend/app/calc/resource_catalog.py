@@ -67,6 +67,84 @@ COMPOSITIONS: dict[str, list[ResourceSpec]] = {
         ResourceSpec("form_oil", "Смазка опалубки", "material", "кг", 0.10, 800),
         ResourceSpec("carpenter_form", "Плотник-опалубщик 4 р.", "labor", "чел-ч", 0.9, 3300),
     ],
+    # ── Кладка перегородок (на 1 м²) ──
+    "partitions": [
+        ResourceSpec("aerated_block", "Газоблок D500", "material", "м³", 0.09, 22000),
+        ResourceSpec("masonry_glue", "Клей/раствор кладочный", "material", "кг", 8.0, 120),
+        ResourceSpec("mason", "Каменщик 4 р.", "labor", "чел-ч", 0.9, 2900),
+    ],
+    # ── Гидро/теплоизоляция (на 1 м²) ──
+    "waterproofing_foundation": [
+        ResourceSpec("waterproof_roll", "Гидроизоляция рулонная (2 слоя)", "material", "м²", 1.15, 1100),
+        ResourceSpec("primer_bit", "Праймер битумный", "material", "кг", 0.3, 700),
+        ResourceSpec("insulator_wp", "Изолировщик 4 р.", "labor", "чел-ч", 0.32, 2600),
+    ],
+    "insulation_foundation": [
+        ResourceSpec("xps", "Плита ЭППС (100 мм)", "material", "м³", 0.1, 28000),
+        ResourceSpec("xps_fix", "Крепёж/клей ЭППС", "material", "компл", 0.2, 1000),
+        ResourceSpec("insulator_fnd", "Изолировщик 3 р.", "labor", "чел-ч", 0.26, 2600),
+    ],
+    "insulation_walls": [
+        ResourceSpec("mineral_wool_w", "Минвата фасадная (120 мм)", "material", "м³", 0.12, 18000),
+        ResourceSpec("membrane_fix", "Мембрана + крепёж", "material", "компл", 0.3, 1200),
+        ResourceSpec("insulator_w", "Изолировщик 3 р.", "labor", "чел-ч", 0.3, 2600),
+    ],
+    "insulation_roof": [
+        ResourceSpec("mineral_wool_r", "Минвата кровельная (150 мм)", "material", "м³", 0.15, 13000),
+        ResourceSpec("insulator_r", "Изолировщик 3 р.", "labor", "чел-ч", 0.27, 2600),
+    ],
+    # ── Кровля (на 1 м²) ──
+    "roof": [
+        ResourceSpec("roof_membrane", "Мягкая кровля наплавляемая (2 слоя)", "material", "м²", 2.3, 1100),
+        ResourceSpec("primer_roof", "Праймер", "material", "кг", 0.3, 700),
+        ResourceSpec("roofer", "Кровельщик 4 р.", "labor", "чел-ч", 0.55, 2900),
+    ],
+    # ── Фасад (на 1 м²) ──
+    "facade": [
+        ResourceSpec("facade_system", "Вентфасад: плита, утеплитель, подсистема", "material", "компл", 1.0, 8000),
+        ResourceSpec("facade_installer", "Монтажник фасадных систем 4 р.", "labor", "чел-ч", 1.35, 3000),
+    ],
+    # ── Окна, витражи (на 1 м²) ──
+    "glazing": [
+        ResourceSpec("window_pvc", "Окно ПВХ / витраж (с фурнитурой)", "material", "м²", 1.0, 24500),
+        ResourceSpec("glazier", "Монтажник светопрозрачных конструкций", "labor", "чел-ч", 1.6, 3100),
+    ],
+    # ── Отделка (на 1 м²) ──
+    "screed": [
+        ResourceSpec("screed_mix", "Пескобетон/ЦПС М300", "material", "м³", 0.05, 28000),
+        ResourceSpec("screed_add", "Фиброволокно/добавки", "material", "кг", 0.1, 1000),
+        ResourceSpec("screeder", "Бетонщик-отделочник 3 р.", "labor", "чел-ч", 0.35, 2900),
+    ],
+    "wall_finish": [
+        ResourceSpec("plaster_set", "Штукатурка, шпатлёвка, грунт, краска", "material", "компл", 1.0, 1750),
+        ResourceSpec("finisher_wall", "Маляр-штукатур 4 р.", "labor", "чел-ч", 0.75, 2950),
+    ],
+    "ceiling_finish": [
+        ResourceSpec("ceiling_set", "Шпатлёвка, грунт, краска потолка", "material", "компл", 1.0, 780),
+        ResourceSpec("finisher_ceil", "Маляр 4 р.", "labor", "чел-ч", 0.35, 2950),
+    ],
+    # ── Инженерные системы (на 1 м² общей площади) ──
+    "hvac": [
+        ResourceSpec("hvac_equipment", "Оборудование ОВиК, воздуховоды, трубы", "material", "компл", 1.0, 2950),
+        ResourceSpec("hvac_installer", "Монтажник систем вентиляции 4 р.", "labor", "чел-ч", 0.5, 3000),
+    ],
+    "plumbing": [
+        ResourceSpec("plumbing_mat", "Трубы, фитинги, сантехприборы", "material", "компл", 1.0, 1950),
+        ResourceSpec("plumber", "Слесарь-сантехник 4 р.", "labor", "чел-ч", 0.33, 3000),
+    ],
+    "electrical": [
+        ResourceSpec("electrical_mat", "Кабель, щиты, розетки, светильники", "material", "компл", 1.0, 3450),
+        ResourceSpec("electrician", "Электромонтажник 4 р.", "labor", "чел-ч", 0.65, 3050),
+    ],
+    "low_current": [
+        ResourceSpec("low_current_mat", "Кабель СКС, слаботочное оборудование", "material", "компл", 1.0, 980),
+        ResourceSpec("lc_installer", "Монтажник слаботочных систем", "labor", "чел-ч", 0.17, 3000),
+    ],
+    # ── Благоустройство (на 1 м²) ──
+    "landscaping": [
+        ResourceSpec("landscape_mat", "Покрытие, бордюр, грунт, наружные сети", "material", "компл", 1.0, 1950),
+        ResourceSpec("landscaper", "Рабочий благоустройства 3 р.", "labor", "чел-ч", 0.4, 2600),
+    ],
 }
 
 

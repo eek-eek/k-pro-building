@@ -51,7 +51,7 @@ def test_concrete_line_has_resources_and_price_from_rollup():
 
 def test_line_without_composition_has_no_resources():
     _, res = _build()
-    line = next(l for l in res.lines if l.title == "Кровля")
+    line = next(l for l in res.lines if l.title == "Подготовительные работы и временные сооружения")
     assert line.resources == []
     assert line.total > 0
 
