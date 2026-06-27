@@ -145,25 +145,33 @@ async function runEstimate() {
 function listen(jobId) {
   const source = new EventSource(`${API}/api/estimate/${jobId}/events`);
   activeSource = source;
+  let gotResult = false; // успех именно этого запуска (не глобальный lastResult)
 
   source.addEventListener("status", (event) => {
-    const status = JSON.parse(event.data);
-    renderSteps(status.steps || []);
-    if (status.status === "error") {
-      showError(new Error(status.error || "Ошибка расчёта"));
-      finish(source);
-    } else if (status.status === "done" && status.result) {
-      lastResult = status.result;
-      renderEstimate(status.result);
-      setStatus("Смета сформирована.");
+    try {
+      const status = JSON.parse(event.data);
+      renderSteps(status.steps || []);
+      if (status.status === "error") {
+        showError(new Error(status.error || "Ошибка расчёта"));
+        finish(source);
+      } else if (status.status === "done" && status.result) {
+        lastResult = status.result;
+        gotResult = true;
+        renderEstimate(status.result);
+        setStatus("Смета сформирована.");
+        finish(source);
+      }
+    } catch (err) {
+      // ошибка парсинга/рендера не должна оставить кнопки заблокированными
+      showError(err);
       finish(source);
     }
   });
 
   source.addEventListener("end", () => finish(source));
   source.onerror = () => {
-    // соединение закрыто — если результат уже есть, просто выходим
-    if (!lastResult) setStatus("Соединение со статусами прервано.", true);
+    // соединение закрыто — если результат этого запуска уже есть, просто выходим
+    if (!gotResult) setStatus("Соединение со статусами прервано.", true);
     finish(source);
   };
 }
@@ -252,11 +260,12 @@ function renderEstimate(r) {
 
 function renderLines(r) {
   const rows = [];
+  const sectionTotals = r.section_totals || {};
   let currentSection = null;
   (r.lines || []).forEach((ln) => {
     if (ln.section !== currentSection) {
       currentSection = ln.section;
-      const sub = r.section_totals[ln.section];
+      const sub = sectionTotals[ln.section];
       rows.push(`<tr class="section-row"><td></td><td colspan="7">${escapeHtml(ln.section)}</td>
         <td class="num">${sub != null ? money(sub) : ""}</td><td></td></tr>`);
     }

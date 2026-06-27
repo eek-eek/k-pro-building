@@ -14,10 +14,13 @@ settings = get_settings()
 
 app = FastAPI(title="AI Smeta KZ", version="0.1.0")
 
+_cors_origins = settings.cors_origin_list
+# Нельзя сочетать wildcard-origin с allow_credentials (спецификация Fetch и
+# защита от кражи кук): разрешаем учётные данные только при явном allowlist.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

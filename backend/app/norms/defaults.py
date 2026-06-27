@@ -29,14 +29,16 @@ CATEGORY_META: dict[str, tuple[str, str]] = {
 
 def _frame_concrete(structure: str) -> float:
     s = structure.lower()
+    # Проверки от частного к общему: «металлокаркас» содержит подстроку «каркас»,
+    # поэтому специфичный ключ должен идти первым.
     if "монолит" in s:
         return 0.30
-    if "сборный" in s:
+    if "сборн" in s:
         return 0.20
-    if "каркас" in s:
-        return 0.18
     if "металлокаркас" in s:
         return 0.08
+    if "каркас" in s:
+        return 0.18
     if "кирпич" in s or "газоблок" in s:
         return 0.10
     return 0.20

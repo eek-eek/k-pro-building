@@ -81,3 +81,22 @@ def test_works_filter_limits_sections(db):
     sections = {ln.section for ln in r.lines}
     assert any("Кровля" in s for s in sections)
     assert not any("Электромонтаж" in s for s in sections)
+
+
+def test_works_filter_no_token_bleed(db):
+    """«Теплоизоляция наружных стен» не должна тянуть кладку и благоустройство."""
+    inp = _input(works=["Теплоизоляция наружных стен"])
+    profile = resolve_norm_profile(db, inp)
+    r = build_estimate(db, inp, profile)
+    sections = {ln.section for ln in r.lines}
+    assert any("теплоизоляц" in s.lower() for s in sections)  # раздел 5 включён
+    assert not any("Кладка" in s for s in sections)
+    assert not any("Благоустройство" in s for s in sections)
+
+
+def test_metal_frame_concrete_coefficient():
+    from app.norms.defaults import resolve_defaults
+    params = resolve_defaults(_input(structure_type="Металлокаркас"))
+    assert params["frame_concrete_per_area"].value == 0.08
+    params2 = resolve_defaults(_input(structure_type="Каркас + заполнение"))
+    assert params2["frame_concrete_per_area"].value == 0.18

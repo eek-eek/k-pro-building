@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import threading
 from collections.abc import Callable
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -20,19 +23,34 @@ ProgressFn = Callable[[str, str], None]
 
 _SOURCE_RANK = {"document": 4, "seed": 3, "llm": 2, "default": 1}
 
+# Сериализация per-signature: одновременные одинаковые запросы не должны
+# дублировать обращения к LLM и гонять вставку в кэш.
+_sig_locks_guard = threading.Lock()
+_sig_locks: dict[str, threading.Lock] = {}
+
+
+def _lock_for(signature: str) -> threading.Lock:
+    with _sig_locks_guard:
+        lock = _sig_locks.get(signature)
+        if lock is None:
+            lock = threading.Lock()
+            _sig_locks[signature] = lock
+        return lock
+
+
+def _cond_key(conditions: dict) -> str:
+    """Стабильный ключ условий для дедупликации правил."""
+    return json.dumps(conditions or {}, ensure_ascii=False, sort_keys=True)
+
 
 def _noop(_key: str, _detail: str) -> None:  # pragma: no cover
     pass
 
 
 def _input_attrs(inp: BuildingInput) -> dict[str, str]:
-    return {
-        "object_type": inp.object_type,
-        "structure_type": inp.structure_type,
-        "foundation_type": inp.foundation_type,
-        "finish_level": inp.finish_level,
-        "engineering_level": inp.engineering_level,
-    }
+    # Тот же набор, что и в сигнатуре кэша — чтобы правило не «протекало»
+    # на вход, отличающийся отделкой/инженерией/регионом и т.п.
+    return inp.discriminators()
 
 
 def _conditions_match(conditions: dict, attrs: dict[str, str]) -> bool:
@@ -97,15 +115,29 @@ def _cache_put(db: Session, profile: NormProfile) -> None:
     if existing:
         existing.profile = payload
         existing.created_at = dt.datetime.now(dt.timezone.utc)
-    else:
-        db.add(
-            KnowledgeCache(
-                signature=profile.signature,
-                object_type=profile.object_type,
-                profile=payload,
+        db.commit()
+        return
+    db.add(
+        KnowledgeCache(
+            signature=profile.signature,
+            object_type=profile.object_type,
+            profile=payload,
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        # Параллельный резолв уже вставил запись с этой сигнатурой — обновим её.
+        db.rollback()
+        row = db.scalar(
+            select(KnowledgeCache).where(
+                KnowledgeCache.signature == profile.signature
             )
         )
-    db.commit()
+        if row is not None:
+            row.profile = payload
+            row.created_at = dt.datetime.now(dt.timezone.utc)
+            db.commit()
 
 
 def _rules_from_db(db: Session, inp: BuildingInput) -> dict[str, NormParam]:
@@ -141,28 +173,45 @@ def _persist_llm_rules(
     params: dict[str, NormParam],
     docs_by_code: dict[str, NormDocument],
 ) -> None:
-    attrs = _input_attrs(inp)
-    conditions = {
-        "structure_type": inp.structure_type,
-        "foundation_type": inp.foundation_type,
-    }
+    """Идемпотентно сохранить извлечённые LLM-правила (upsert по ключу).
+
+    Условия включают полный набор дискриминаторов входа, поэтому правило
+    применяется только к эквивалентным объектам. Существующее правило того же
+    (object_type, category, conditions, source) обновляется, а не дублируется.
+    """
+    conditions = inp.discriminators()
+    existing = db.scalars(
+        select(NormRule).where(
+            NormRule.object_type == inp.object_type, NormRule.source == "llm"
+        )
+    ).all()
+    by_key = {(r.category, _cond_key(r.conditions)): r for r in existing}
+
     for cat, p in params.items():
         if p.source != "llm":
             continue
         doc = docs_by_code.get(p.document_code) if p.document_code else None
-        db.add(
-            NormRule(
-                object_type=inp.object_type,
-                category=cat,
-                value=p.value,
-                unit=p.unit,
-                conditions=conditions,
-                confidence=p.confidence,
-                source="llm",
-                note=p.note,
-                document_id=doc.id if doc else None,
+        row = by_key.get((cat, _cond_key(conditions)))
+        if row is not None:
+            row.value = p.value
+            row.unit = p.unit
+            row.confidence = p.confidence
+            row.note = p.note
+            row.document_id = doc.id if doc else None
+        else:
+            db.add(
+                NormRule(
+                    object_type=inp.object_type,
+                    category=cat,
+                    value=p.value,
+                    unit=p.unit,
+                    conditions=conditions,
+                    confidence=p.confidence,
+                    source="llm",
+                    note=p.note,
+                    document_id=doc.id if doc else None,
+                )
             )
-        )
     db.commit()
 
 
@@ -173,13 +222,26 @@ def resolve_norm_profile(
     progress = progress or _noop
     signature = inp.signature()
 
-    # 1. Кэш
+    # 1. Кэш (быстрый путь без блокировки)
     progress("norms_cache", "Поиск нормативного профиля в БД")
     cached = _cache_get(db, signature)
     if cached is not None:
         progress("norms_cache", "Профиль найден в БД (без обращения к LLM)")
         return cached
 
+    # Сериализуем одинаковые запросы: первый делает работу и кэширует,
+    # остальные дожидаются и берут результат из кэша.
+    with _lock_for(signature):
+        cached = _cache_get(db, signature)
+        if cached is not None:
+            progress("norms_cache", "Профиль найден в БД (без обращения к LLM)")
+            return cached
+        return _build_profile(db, inp, signature, progress)
+
+
+def _build_profile(
+    db: Session, inp: BuildingInput, signature: str, progress: ProgressFn
+) -> NormProfile:
     # 2. База: дефолты (всегда полный набор)
     params: dict[str, NormParam] = resolve_defaults(inp)
 
