@@ -128,7 +128,8 @@ def get_estimate_full(estimate_id: int, db: Session = Depends(get_db)) -> dict:
     cv = est.current_version
     return {
         "estimate": {"id": est.id, "name": est.name, "object_type": est.object_type,
-                     "city": est.city, "status": est.status},
+                     "city": est.city, "status": est.status, "object_id": est.object_id},
+        "object_id": est.object_id,
         "current_version": ({"version_number": cv.version_number, "input": cv.input,
                              "result": cv.result, "source": cv.source} if cv else None),
         "version_count": db.query(EstimateVersion).filter_by(estimate_id=est.id).count(),
@@ -570,3 +571,47 @@ def delete_object(object_id: int, db: Session = Depends(get_db)) -> Response:
     db.delete(obj)
     db.commit()
     return Response(status_code=204)
+
+
+def _object_dims(obj: BuildingObject) -> tuple[float, float]:
+    if obj.polygon:
+        return bbox_dims_m(obj.polygon)
+    side = math.sqrt(obj.area_m2) if obj.area_m2 > 0 else 30.0
+    return side, side
+
+
+@router.get("/objects/{object_id}/concept")
+def object_concept(object_id: int, object_type: str = "Жилой дом",
+                   floors: int | None = None, db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    length, width = _object_dims(obj)
+    inp = propose_concept(obj.area_m2 or (length * width), length, width,
+                          obj.city, object_type, floors)
+    inp.project_name = obj.name or "Смета"
+    return to_jsonable(inp)
+
+
+@router.post("/objects/{object_id}/estimate")
+def object_create_estimate(object_id: int, body: BuildingInput | None = Body(None),
+                           db: Session = Depends(get_db)) -> dict:
+    obj = db.get(BuildingObject, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    if body is not None:
+        inp = body
+    else:
+        length, width = _object_dims(obj)
+        inp = propose_concept(obj.area_m2 or (length * width), length, width,
+                              obj.city, "Жилой дом", None)
+        inp.project_name = obj.name or "Смета"
+    profile = resolve_norm_profile(db, inp)
+    result = build_estimate(db, inp, profile)
+    est = Estimate(name=inp.project_name or obj.name, object_type=inp.object_type,
+                   city=inp.city, object_id=object_id)
+    db.add(est)
+    db.flush()
+    version = create_version(db, est, inp, result, source="initial")
+    db.commit()
+    return {"estimate_id": est.id, "version_number": version.version_number}

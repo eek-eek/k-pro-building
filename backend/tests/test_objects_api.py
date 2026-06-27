@@ -41,3 +41,32 @@ def test_object_crud():
     assert client.get(f"/api/objects/{oid}").json()["object"]["name"] == "Новый"
     assert client.delete(f"/api/objects/{oid}").status_code == 204
     assert client.get(f"/api/objects/{oid}").status_code == 404
+
+
+def test_concept_and_estimate_from_object():
+    oid = client.post("/api/objects", json={
+        "name": "Дом", "city": "Алматы", "lat": 43.24, "lon": 76.9, "polygon": POLY}).json()["id"]
+    concept = client.get(f"/api/objects/{oid}/concept", params={"object_type": "Жилой дом"}).json()
+    assert concept["building_length"] > 0 and concept["floors"] == 9
+    assert concept["city"] == "Алматы"
+
+    r = client.post(f"/api/objects/{oid}/estimate", json=concept)
+    assert r.status_code == 200
+    eid = r.json()["estimate_id"]
+    full = client.get(f"/api/estimates/{eid}").json()
+    assert full["object_id"] == oid
+    cv = full["current_version"]
+    assert cv is not None  # смета сразу рассчитана из концепта
+    assert cv["input"]["building_length"] == concept["building_length"]
+    # объект показывает привязанную смету
+    assert any(e["id"] == eid for e in client.get(f"/api/objects/{oid}").json()["estimates"])
+
+
+def test_deleting_object_keeps_estimate_and_nulls_link():
+    oid = client.post("/api/objects", json={
+        "name": "X", "city": "Алматы", "lat": 43.24, "lon": 76.9, "polygon": POLY}).json()["id"]
+    eid = client.post(f"/api/objects/{oid}/estimate").json()["estimate_id"]   # body=None → дефолтный концепт
+    assert client.delete(f"/api/objects/{oid}").status_code == 204
+    full = client.get(f"/api/estimates/{eid}").json()
+    assert full["object_id"] is None              # связь обнулена
+    assert full["current_version"] is not None    # смета осталась рассчитанной
