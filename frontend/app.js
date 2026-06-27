@@ -856,5 +856,93 @@ function promptBlock(p) {
   </div>`;
 }
 
+// ───────────────────────── objects (SP1) ─────────────────────────
+const CITY_CENTER = { "Алматы": [43.238, 76.889], "Астана": [51.128, 71.430] };
+
+function baseLayers() {
+  const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: "© OpenStreetMap" });
+  const sat = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "© Esri" });
+  return { "Схема": osm, "Спутник": sat };
+}
+
+let DRAWN = null; // {polygon, lat, lon}
+
+async function viewObjects() {
+  APP().innerHTML = `
+    <div class="page">
+      <div class="page-head"><h1 class="title">Объекты</h1>
+        <select id="citySel" class="ver-select" style="margin-left:auto;width:160px">
+          <option>Алматы</option><option>Астана</option></select></div>
+      <div class="subtitle">Нарисуйте контур участка на карте (инструмент «прямоугольник»), затем создайте объект.</div>
+      <div id="map" class="map"></div>
+      <div id="objForm"></div>
+      <div id="objList"></div>
+    </div>`;
+  const layers = baseLayers();
+  const map = L.map("map", { layers: [layers["Схема"]] }).setView(CITY_CENTER["Алматы"], 12);
+  L.control.layers(layers).addTo(map);
+  const drawn = new L.FeatureGroup().addTo(map);
+  map.addControl(new L.Control.Draw({
+    draw: { polygon: false, polyline: false, circle: false, marker: false,
+            circlemarker: false, rectangle: {} },
+    edit: { featureGroup: drawn, edit: false, remove: true },
+  }));
+  map.on(L.Draw.Event.CREATED, (e) => {
+    drawn.clearLayers(); drawn.addLayer(e.layer);
+    const gj = e.layer.toGeoJSON().geometry;       // Polygon
+    const c = e.layer.getBounds().getCenter();
+    DRAWN = { polygon: gj, lat: c.lat, lon: c.lng };
+    renderObjForm();
+  });
+  document.getElementById("citySel").addEventListener("change", (ev) =>
+    map.setView(CITY_CENTER[ev.target.value] || CITY_CENTER["Алматы"], 12));
+  renderObjForm();
+  await drawObjList();
+}
+
+function renderObjForm() {
+  const el = document.getElementById("objForm");
+  if (!DRAWN) { el.innerHTML = `<div class="hint">Участок ещё не нарисован.</div>`; return; }
+  el.innerHTML = `<div class="obj-form">
+    <div class="field"><label>Название</label><input id="objName" type="text" value="Новый объект"></div>
+    <div class="field"><label>Город</label><select id="objCity"><option>Алматы</option><option>Астана</option></select></div>
+    <button class="btn primary" id="objSave">Создать объект</button>
+    <span class="hint">центр: ${DRAWN.lat.toFixed(5)}, ${DRAWN.lon.toFixed(5)}</span></div>`;
+  document.getElementById("objCity").value = document.getElementById("citySel").value;
+  document.getElementById("objSave").addEventListener("click", async () => {
+    const { id } = await Api.createObject({
+      name: document.getElementById("objName").value,
+      city: document.getElementById("objCity").value,
+      lat: DRAWN.lat, lon: DRAWN.lon, polygon: DRAWN.polygon });
+    DRAWN = null;
+    toast("Объект создан");
+    location.hash = `#/object/${id}`;
+  });
+}
+
+async function drawObjList() {
+  const items = await Api.listObjects();
+  const el = document.getElementById("objList");
+  if (!items.length) { el.innerHTML = `<div class="empty">Объектов пока нет.</div>`; return; }
+  el.innerHTML = `<div class="list">` + items.map((o) => `<div class="row" data-id="${o.id}">
+    <div class="code">№ ${o.id}</div>
+    <div class="main"><div class="name">${escapeHtml(o.name)}</div>
+      <div class="meta">${escapeHtml(o.city)} · ${money(o.area_m2)} м² · смет: ${o.estimate_count}</div></div>
+    <div class="status">${statusBadge(o.status === "selected" ? "calculated" : "draft")}</div>
+    <button class="del" data-del="${o.id}" title="Удалить">✕</button></div>`).join("") + `</div>`;
+  el.querySelectorAll(".row").forEach((r) => r.addEventListener("click", (ev) => {
+    if (ev.target.dataset.del) return;
+    location.hash = `#/object/${r.dataset.id}`;
+  }));
+  el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    if (!confirm("Удалить объект? Привязанные сметы останутся.")) return;
+    await Api.deleteObject(b.dataset.del); toast("Объект удалён"); drawObjList();
+  }));
+}
+
 // ───────────────────────── init ─────────────────────────
 render();
