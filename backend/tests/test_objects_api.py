@@ -1,6 +1,15 @@
+from fastapi.testclient import TestClient
+
 from app.database import SessionLocal, engine
+from app.main import app
 from app.seed import run_seed
 from app.models import BuildingObject, Estimate
+
+client = TestClient(app)
+
+POLY = {"type": "Polygon", "coordinates": [[
+    [76.900, 43.2400], [76.901, 43.2400], [76.901, 43.2405], [76.900, 43.2405], [76.900, 43.2400],
+]]}
 
 
 def test_building_object_table_and_estimate_fk():
@@ -19,3 +28,16 @@ def test_building_object_table_and_estimate_fk():
         assert est.object_id == obj.id
     finally:
         db.close()
+
+
+def test_object_crud():
+    oid = client.post("/api/objects", json={
+        "name": "Участок-1", "city": "Алматы", "lat": 43.24, "lon": 76.9, "polygon": POLY}).json()["id"]
+    listing = client.get("/api/objects").json()
+    assert any(o["id"] == oid and o["area_m2"] > 0 for o in listing)  # площадь из полигона
+    got = client.get(f"/api/objects/{oid}").json()
+    assert got["object"]["name"] == "Участок-1"
+    client.patch(f"/api/objects/{oid}", json={"name": "Новый"})
+    assert client.get(f"/api/objects/{oid}").json()["object"]["name"] == "Новый"
+    assert client.delete(f"/api/objects/{oid}").status_code == 204
+    assert client.get(f"/api/objects/{oid}").status_code == 404
