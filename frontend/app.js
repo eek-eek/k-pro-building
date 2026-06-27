@@ -261,7 +261,6 @@ async function viewDetail(id) {
               <div class="row-actions">
                 <button class="btn accent" id="calcBtn">${calculated ? "Изменить и пересчитать" : "Рассчитать"}</button>
               </div>
-              <ul class="steps" id="steps"></ul>
             </div>
           </details>
           <div id="result"></div>
@@ -286,16 +285,52 @@ async function viewDetail(id) {
   renderChat(id, calculated);
 }
 
+let _calcTimer = null;
+
+function showCalcOverlay() {
+  hideCalcOverlay();
+  const ov = document.createElement("div");
+  ov.className = "calc-overlay";
+  ov.id = "calcOverlay";
+  ov.innerHTML = `
+    <div class="calc-modal" role="dialog" aria-live="polite" aria-busy="true">
+      <div class="spinner"></div>
+      <div class="calc-title">Идёт расчёт сметы…</div>
+      <div class="calc-hint">Подбор норм РК и извлечение через ИИ может занять до минуты.
+        Не закрывайте страницу.</div>
+      <div class="calc-elapsed" id="calcElapsed">прошло 0 с</div>
+      <ul class="steps" id="ovSteps"></ul>
+    </div>`;
+  document.body.appendChild(ov);
+  document.body.style.overflow = "hidden";
+  const started = Date.now();
+  const elapsedEl = ov.querySelector("#calcElapsed");
+  _calcTimer = setInterval(() => {
+    elapsedEl.textContent = `прошло ${Math.round((Date.now() - started) / 1000)} с`;
+  }, 1000);
+  return ov.querySelector("#ovSteps");
+}
+
+function hideCalcOverlay() {
+  if (_calcTimer) { clearInterval(_calcTimer); _calcTimer = null; }
+  const ov = document.getElementById("calcOverlay");
+  if (ov) ov.remove();
+  document.body.style.overflow = "";
+}
+
 async function runCalc(id) {
   const input = collectInputs(document.getElementById("inputs"));
-  const stepsEl = document.getElementById("steps");
   const calcBtn = document.getElementById("calcBtn");
   calcBtn.disabled = true;
+  const stepsEl = showCalcOverlay();
   stepsEl.innerHTML = `<li class="running"><span class="mark">…</span><span>Запуск расчёта…</span></li>`;
   try {
     const { job_id } = await Api.calc(id, input);
-    listenJob(job_id, stepsEl, () => { toast("Смета рассчитана"); render(); }, () => { calcBtn.disabled = false; });
+    listenJob(job_id, stepsEl,
+      () => { hideCalcOverlay(); toast("Смета рассчитана"); render(); },
+      () => { hideCalcOverlay(); calcBtn.disabled = false; });
   } catch (e) {
+    hideCalcOverlay();
     toast(e.detail || "Ошибка запуска", true);
     calcBtn.disabled = false;
   }

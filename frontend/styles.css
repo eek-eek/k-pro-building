@@ -242,7 +242,37 @@ ul.steps { list-style: none; margin: 14px 0; padding: 0; }
 ul.steps li { display: flex; gap: 10px; align-items: center; padding: 4px 0; color: var(--text-2); font-size: 14px; }
 ul.steps li.done { color: var(--text); }
 ul.steps li.running { color: var(--accent); }
+ul.steps li.error { color: var(--danger); }
 ul.steps .mark { width: 18px; text-align: center; font-family: var(--mono); }
+ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
+
+/* ── Расчёт: блокирующий оверлей со спиннером ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: .25; } }
+.calc-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(28, 32, 36, .42);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+}
+.calc-modal {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 28px 30px; width: min(440px, 90vw); text-align: center;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .18);
+}
+.spinner {
+  width: 42px; height: 42px; margin: 0 auto 16px; border-radius: 50%;
+  border: 3px solid var(--accent-tint); border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+.calc-title { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
+.calc-hint { font-size: 13px; color: var(--text-2); margin: 8px 0 4px; line-height: 1.5; }
+.calc-elapsed { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+.calc-modal ul.steps { text-align: left; margin: 16px 0 0; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 1.6s; }
+  ul.steps li.running .mark { animation: none; }
+}
 
 /* ── Chat ── */
 .chat-head { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 14px; }
