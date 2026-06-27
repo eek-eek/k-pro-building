@@ -1,0 +1,199 @@
+"""Сборка сметы: объёмы × цены → строки, разделы, итоги (накладные/резерв/НДС)."""
+from __future__ import annotations
+
+import datetime as dt
+
+from sqlalchemy.orm import Session
+
+from ..schemas import (
+    BuildingInput,
+    EstimateLine,
+    EstimateResult,
+    EstimateTotals,
+    NormProfile,
+)
+from .geometry import derive
+from .pricing import get_price
+from .volumes import compute_volumes
+
+# (номер, название раздела, [ключи объёмов], [подстроки для фильтра по видам работ])
+SECTIONS: list[tuple[int, str, list[str], list[str]]] = [
+    (2, "Земляные работы и вывоз грунта",
+     ["excavation", "soil_removal", "backfill"], ["земл", "грунт"]),
+    (3, "Фундаменты и монолитные ЖБ конструкции",
+     ["foundation_concrete", "frame_concrete", "rebar", "formwork"],
+     ["фундамент", "монолит", "армир", "бетон"]),
+    (4, "Кладка наружных/внутренних стен и перегородок",
+     ["partitions"], ["кладк", "стен", "перегород"]),
+    (5, "Гидроизоляция и теплоизоляция",
+     ["waterproofing_foundation", "insulation_foundation",
+      "insulation_walls", "insulation_roof"], ["гидро", "тепло", "изоляц"]),
+    (6, "Кровля", ["roof"], ["кровл"]),
+    (7, "Фасадные работы", ["facade"], ["фасад"]),
+    (8, "Окна, витражи, наружные двери", ["glazing"], ["окн", "витраж", "двер"]),
+    (9, "Черновая и чистовая отделка",
+     ["screed", "wall_finish", "ceiling_finish"], ["отделк", "штукатур", "пол"]),
+    (10, "Внутренние сети ОВиК", ["hvac"], ["овик", "отоплен", "вентиляц"]),
+    (11, "Водоснабжение и канализация", ["plumbing"], ["водоснаб", "канализ", "вк"]),
+    (12, "Электромонтажные работы", ["electrical"], ["электр"]),
+    (13, "Слаботочные системы", ["low_current"], ["слаботоч"]),
+    (14, "Благоустройство и наружные сети",
+     ["landscaping"], ["благоустр", "наружн"]),
+]
+
+CONTRACTOR_QUESTIONS = [
+    "На основании каких нормативных документов и сборников расценок составлена смета "
+    "(СН РК, РДС РК, собственные нормативы)?",
+    "Какие укрупнённые показатели использованы для объёмов бетона, арматуры, опалубки? "
+    "Предоставьте расчёты.",
+    "Стоимость 1 м³ бетона с доставкой и укладкой, марка бетона?",
+    "Стоимость 1 т арматуры с заготовкой и монтажом, класс арматуры?",
+    "Конкретные марки и производители ключевых материалов (бетон, утеплитель, фасад, окна)?",
+    "Структура прямых затрат (материалы / труд / машины) по основным разделам?",
+    "Процент накладных расходов и сметной прибыли?",
+    "Учтены ли временные здания и сооружения, геодезия, лабораторные испытания, охрана труда?",
+    "Предусмотрен ли резерв на непредвиденные работы и в каком размере?",
+    "Сроки по разделам и общий срок строительства, гарантии, график оплаты?",
+]
+
+
+def _section_included(section_match: list[str], works_lc: list[str]) -> bool:
+    if not works_lc:
+        return True
+    for work in works_lc:
+        if any(sub in work for sub in section_match):
+            return True
+    return False
+
+
+def build_estimate(
+    db: Session, inp: BuildingInput, profile: NormProfile
+) -> EstimateResult:
+    geo = derive(inp)
+    volumes = compute_volumes(inp, profile, geo)
+    region = inp.city.split("/")[0].strip() or "KZ"
+
+    works_lc = [w.lower() for w in inp.works if w.strip()]
+    lines: list[EstimateLine] = []
+    section_totals: dict[str, float] = {}
+    direct_core = 0.0
+
+    for number, title, keys, match in SECTIONS:
+        if not _section_included(match, works_lc):
+            continue
+        sub_index = 0
+        section_sum = 0.0
+        for key in keys:
+            vol = volumes.get(key)
+            if vol is None or vol.quantity <= 0:
+                continue
+            price = get_price(db, key, region)
+            unit_cost = price.material + price.labor + price.machine
+            line_total = round(vol.quantity * unit_cost)
+            sub_index += 1
+            lines.append(
+                EstimateLine(
+                    no=f"{number}.{sub_index}",
+                    section=title,
+                    title=vol.title,
+                    norm=vol.norm,
+                    unit=vol.unit,
+                    quantity=vol.quantity,
+                    material_price=price.material,
+                    labor_price=price.labor,
+                    machine_price=price.machine,
+                    total=line_total,
+                    needs_review=vol.needs_review,
+                    comment="требует проверки сметчиком" if vol.needs_review else "",
+                )
+            )
+            section_sum += line_total
+        if section_sum > 0:
+            section_totals[title] = round(section_sum)
+            direct_core += section_sum
+
+    # Раздел 1: подготовительные работы — 1.5% от прямых затрат (укрупнённо)
+    prep_title = "Подготовительные работы и временные сооружения"
+    if not works_lc or any("подготов" in w or "временны" in w for w in works_lc):
+        prep_total = round(direct_core * 0.015)
+        if prep_total > 0:
+            lines.insert(
+                0,
+                EstimateLine(
+                    no="1.1",
+                    section=prep_title,
+                    title="Подготовительные работы и временные сооружения",
+                    norm="СН РК 8.02-04-2002 (аналог)",
+                    unit="усл.",
+                    quantity=1,
+                    labor_price=prep_total,
+                    total=prep_total,
+                    comment="1.5% от прямых затрат (ориентировочно)",
+                ),
+            )
+            section_totals[prep_title] = prep_total
+            direct_core += prep_total
+
+    direct = round(direct_core)
+    overhead = round(direct * inp.overhead_pct / 100)
+    subtotal1 = direct + overhead
+    contingency = round(subtotal1 * inp.contingency_pct / 100)
+    subtotal2 = subtotal1 + contingency
+    vat = round(subtotal2 * inp.vat_pct / 100)
+    grand = subtotal2 + vat
+
+    totals = EstimateTotals(
+        direct=direct,
+        overhead=overhead,
+        overhead_pct=inp.overhead_pct,
+        subtotal_with_overhead=subtotal1,
+        contingency=contingency,
+        contingency_pct=inp.contingency_pct,
+        subtotal_with_contingency=subtotal2,
+        vat=vat,
+        vat_pct=inp.vat_pct,
+        grand_total=grand,
+    )
+
+    review_count = sum(1 for ln in lines if ln.needs_review)
+    warnings = [
+        "Смета предварительная (ориентировочная), низкий класс точности (класс 5): "
+        "без рабочих чертежей и спецификаций.",
+        "Цены индикативные, рыночные на текущую дату по региону, требуют уточнения "
+        "у поставщиков и подрядчиков.",
+        "Не является основанием для договоров подряда — только для предварительной "
+        "оценки и сравнения предложений.",
+    ]
+    if review_count:
+        warnings.append(
+            f"Позиций, требующих проверки сметчиком: {review_count}. "
+            "Номера норм не выдуманы; неподтверждённые отмечены."
+        )
+    if profile.from_cache:
+        warnings.append("Нормативный профиль взят из кэша БД (без обращения к LLM).")
+
+    clarifications = [
+        "Полный комплект проектной документации (АР, КР, ОВиК, ВК, ЭОМ, СС).",
+        "Толщина и армирование фундаментной плиты; толщины перекрытий, сечения колонн/стен.",
+        "Конкретные марки материалов (фасад, кровля, окна, утеплитель, инженерия).",
+        "Условия подключения к городским сетям (вода, канализация, электричество, тепло).",
+        "Состав благоустройства и наружных сетей; состав временных зданий и сооружений.",
+    ]
+    for p in profile.params.values():
+        if p.needs_review and p.note:
+            clarifications.append(f"Проверить: {p.category} — {p.note}")
+
+    return EstimateResult(
+        project_name=inp.project_name,
+        city=inp.city,
+        object_type=inp.object_type,
+        warnings=warnings,
+        sources=profile.sources,
+        volumes=list(volumes.values()),
+        lines=lines,
+        section_totals=section_totals,
+        totals=totals,
+        contractor_questions=CONTRACTOR_QUESTIONS,
+        clarifications=clarifications,
+        generated_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+    )

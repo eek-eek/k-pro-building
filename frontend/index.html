@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Smeta KZ</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>AI Smeta KZ</h1>
+    <p>Заказчик вводит понятные параметры — система рассчитывает объёмы и смету по нормам РК</p>
+  </header>
+
+  <main>
+    <section>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="project" type="button">Проект</button>
+        <button class="tab" data-tab="works" type="button">Виды работ</button>
+        <button class="tab" data-tab="compare" type="button">Сравнение</button>
+      </div>
+
+      <div id="project" class="pane active">
+        <h2>Исходные данные</h2>
+        <div class="warning">
+          Ключ LLM хранится на бэкенде (.env), в браузер не передаётся. Расчёт объёмов и
+          нормы выполняются на сервере; повторные профили берутся из БД без обращения к LLM.
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="projectName">Название проекта</label>
+            <input id="projectName" value="Черновая смета объекта">
+          </div>
+          <div class="field">
+            <label for="city">Город / регион РК</label>
+            <input id="city" value="Астана / Казахстан">
+          </div>
+          <div class="field">
+            <label for="objectType">Тип объекта</label>
+            <select id="objectType">
+              <option>Жилой дом</option>
+              <option>Коммерческое помещение</option>
+              <option>Склад</option>
+              <option>Офис</option>
+              <option>Производственный объект</option>
+              <option>Реконструкция / ремонт</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="floors">Этажность</label>
+            <input id="floors" type="number" min="1" value="5">
+          </div>
+          <div class="field">
+            <label for="totalArea">Общая площадь, м2</label>
+            <input id="totalArea" type="number" min="0" value="2500">
+          </div>
+          <div class="field">
+            <label for="buildingLength">Габарит длина, м</label>
+            <input id="buildingLength" type="number" min="0" step="0.1" value="50">
+          </div>
+          <div class="field">
+            <label for="buildingWidth">Габарит ширина, м</label>
+            <input id="buildingWidth" type="number" min="0" step="0.1" value="20">
+          </div>
+          <div class="field">
+            <label for="floorHeight">Высота этажа, м</label>
+            <input id="floorHeight" type="number" min="0" step="0.1" value="3">
+          </div>
+          <div class="field">
+            <label for="structureType">Конструктив</label>
+            <select id="structureType">
+              <option>Монолитный железобетон</option>
+              <option>Каркас + заполнение</option>
+              <option>Кирпич/газоблок</option>
+              <option>Металлокаркас</option>
+              <option>Сборный железобетон</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="foundationType">Фундамент</label>
+            <select id="foundationType">
+              <option>Плита</option>
+              <option>Ленточный</option>
+              <option>Свайный</option>
+              <option>Столбчатый</option>
+              <option>Определить по проекту</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="finishLevel">Класс отделки</label>
+            <select id="finishLevel">
+              <option>Черновая</option>
+              <option>White box</option>
+              <option>Стандарт</option>
+              <option>Бизнес</option>
+              <option>Без отделки</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="engineeringLevel">Класс инженерии</label>
+            <select id="engineeringLevel">
+              <option>Базовая</option>
+              <option>Стандарт</option>
+              <option>Повышенная</option>
+              <option>Определить по проекту</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="checks">
+          <label><input id="basement" type="checkbox"> Есть подвал</label>
+          <label><input id="parking" type="checkbox"> Есть паркинг</label>
+          <label><input id="useSearch" type="checkbox" checked> Искать актуальные нормы РК</label>
+          <label><input id="demoMode" type="checkbox"> Демо без LLM</label>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="overhead">Накладные/админ., %</label>
+            <input id="overhead" type="number" min="0" value="8">
+          </div>
+          <div class="field">
+            <label for="contingency">Резерв/риски, %</label>
+            <input id="contingency" type="number" min="0" value="5">
+          </div>
+          <div class="field">
+            <label for="vat">НДС, %</label>
+            <input id="vat" type="number" min="0" value="12">
+          </div>
+          <div class="field span-2">
+            <label for="assumptions">Что нужно учесть</label>
+            <textarea id="assumptions">Я как заказчик не знаю объёмы бетона, арматуры и материалов. Сначала рассчитай ориентировочные объёмы по нормам/практике РК и геометрии объекта.
+Цель: получить предварительное коммерческое предложение для проверки предложений подрядчиков.
+Если нормы РК не найдены или неоднозначны, не выдумывать номер документа, а пометить строку как требующую проверки сметчиком.
+Итог нужен в тенге, с разбивкой по материалам, работам, машинам, накладным, резерву и НДС.</textarea>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="runButton" class="primary" type="button">Рассчитать смету</button>
+          <button id="demoButton" type="button">Быстрый демо-расчёт</button>
+        </div>
+        <div id="status" class="status">Готово.</div>
+        <ul id="steps" class="steps"></ul>
+      </div>
+
+      <div id="works" class="pane">
+        <h2>Виды работ</h2>
+        <div class="work-row">
+          <input id="workInput" placeholder="Например: устройство монолитной плиты">
+          <button id="addWork" type="button">Добавить</button>
+        </div>
+        <div id="workList" class="work-list"></div>
+        <div class="hint">Отмеченные виды работ определяют, какие разделы попадут в смету.</div>
+      </div>
+
+      <div id="compare" class="pane">
+        <h2>Сравнение с подрядчиком</h2>
+        <div class="placeholder">
+          <strong>Заглушка будущего модуля.</strong> Загрузка сметы подрядчика,
+          сопоставление строк, поиск завышений/занижений, риск-флаги и отчёт по отклонениям.
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Смета</h2>
+      <div id="result" class="result-area">
+        <div class="placeholder">Здесь появится расчёт объёмов и смета.</div>
+      </div>
+      <div class="actions">
+        <button id="saveButton" class="secondary" type="button">Сохранить TXT</button>
+        <button id="copyButton" type="button">Копировать</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
