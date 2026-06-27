@@ -1,9 +1,7 @@
-"""Фабрика LLM-провайдера по настройкам окружения."""
+"""Фабрика LLM-провайдера из эффективных настроек (env + БД)."""
 from __future__ import annotations
 
-from functools import lru_cache
-
-from ..config import get_settings
+from ..database import SessionLocal
 from .anthropic import AnthropicProvider
 from .base import LLMProvider
 from .demo import DemoProvider
@@ -11,15 +9,20 @@ from .gemini import GeminiProvider
 from .openai import OpenAIProvider
 
 
-@lru_cache
-def get_provider() -> LLMProvider:
-    s = get_settings()
-    provider = (s.llm_provider or "demo").lower()
-
+def build_provider(eff) -> LLMProvider:
+    provider = (eff.llm_provider or "demo").lower()
     if provider == "gemini":
-        return GeminiProvider(s.gemini_api_key, s.gemini_model, s.llm_use_search)
+        return GeminiProvider(eff.gemini_api_key, eff.gemini_model, eff.llm_use_search)
     if provider == "anthropic":
-        return AnthropicProvider(s.anthropic_api_key, s.anthropic_model)
+        return AnthropicProvider(eff.anthropic_api_key, eff.anthropic_model)
     if provider == "openai":
-        return OpenAIProvider(s.openai_api_key, s.openai_model)
+        return OpenAIProvider(eff.openai_api_key, eff.openai_model)
     return DemoProvider()
+
+
+def get_provider() -> LLMProvider:
+    """Build a provider from current effective settings (reads DB each call → hot reload)."""
+    from ..settings_service import get_effective_settings
+    with SessionLocal() as db:
+        eff = get_effective_settings(db)
+    return build_provider(eff)
