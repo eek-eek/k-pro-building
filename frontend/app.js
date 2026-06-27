@@ -54,6 +54,7 @@ const Api = {
   manualEdit: (id, lines) => api("POST", `/estimates/${id}/manual-edit`, { lines }),
   recommendations: (id) => api("GET", `/estimates/${id}/recommendations`),
   addRecommendation: (id, key) => api("POST", `/estimates/${id}/recommendations`, { key }),
+  suggestPrices: (id, source) => api("POST", `/estimates/${id}/suggest-material-prices`, { source }),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
   listChat: (id) => api("GET", `/estimates/${id}/chat`),
@@ -339,14 +340,44 @@ function renderResult(r) {
     </tr></thead><tbody id="smetaTbody">${renderLines(r)}</tbody></table></div>
     <div class="row-actions">
       <button class="btn accent" id="saveEditBtn">Сохранить правки</button>
+      <button class="btn sm" id="satuBtn" title="Обновить цены материалов из Satu.kz (розница)">Цены материалов: Satu</button>
       <span class="hint">Раскройте строку (▸) — правьте ресурсы (расход/цена), добавляйте «+ ресурс». Сервер пересчитает итоги и создаст версию.</span>
     </div></div>`);
   parts.push(renderTotals(r.totals));
   parts.push(`<div id="recsCard"></div>`);
   document.getElementById("result").innerHTML = parts.join("");
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
+  const satuBtn = document.getElementById("satuBtn");
+  if (satuBtn) satuBtn.addEventListener("click", suggestSatuPrices);
   wireTable();
   loadRecs();
+}
+
+async function suggestSatuPrices() {
+  syncEdits();
+  const btn = document.getElementById("satuBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Запрос к Satu…"; }
+  let data;
+  try {
+    data = await Api.suggestPrices(DETAIL.id, "satu");
+  } catch (e) {
+    toast(e.detail || "Источник цен недоступен", true);
+    return;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Цены материалов: Satu"; }
+  }
+  const sugg = (data && data.suggestions) || {};
+  let applied = 0, fromSatu = 0;
+  DETAIL.lines.forEach((ln) => (ln.resources || []).forEach((res) => {
+    const q = sugg[res.code];
+    if (q && res.kind === "material") {
+      if (Number(res.price) !== Number(q.price)) applied += 1;
+      res.price = q.price;
+      if (q.source === "satu") fromSatu += 1;
+    }
+  }));
+  rerenderTbody();
+  toast(`Цены материалов обновлены: изменено ${applied} (из Satu ${fromSatu}). Проверьте и сохраните.`);
 }
 
 // ── recommendations (типовые позиции по нормам РК, считает сервер) ──

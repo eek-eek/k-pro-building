@@ -23,6 +23,10 @@ SATU_CATEGORIES: dict[str, str] = {
 
 _PRICE_RE = re.compile(r"(\d[\d\s ]{2,})\s*(?:₸|тг|тенге)", re.IGNORECASE)
 
+# Доверяем Satu только при достаточной выборке после фильтра шума; иначе откат на
+# курируемую цену (статичный HTML Satu отдаёт мало цен — единичные значения шумны).
+MIN_SAMPLES = 3
+
 
 def parse_prices(html: str) -> list[float]:
     out: list[float] = []
@@ -66,7 +70,7 @@ class SatuSource:
                         html = self._fetch(url)
                         self._cache[url] = html
                     prices = [p for p in parse_prices(html) if 0.2 * anchor <= p <= 5 * anchor]
-                    if prices:
+                    if len(prices) >= MIN_SAMPLES:
                         med = round(statistics.median(prices))
                         quote = PriceQuote(code=c, price=med, source="satu",
                                            note=f"медиана {len(prices)} предложений Satu (розница)")

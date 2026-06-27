@@ -28,6 +28,13 @@ def test_satu_falls_back_to_curated_on_error():
     assert q["rebar_a500"].source == "curated"
 
 
+def test_satu_falls_back_when_too_few_samples():
+    # одна цена в полосе анкора — недостаточно (нужно >= MIN_SAMPLES); откат на курируемую
+    src = SatuSource(fetch=lambda url: "350 000 ₸")
+    q = src.quote_materials(["rebar_a500"])
+    assert q["rebar_a500"].source == "curated"
+
+
 def test_satu_ignores_unmapped_or_nonmaterial():
     q = SatuSource(fetch=lambda url: "1 ₸").quote_materials(["steelfixer"])
     assert "steelfixer" not in q
