@@ -224,6 +224,8 @@ def recompute_estimate(
     direct_core = 0.0
     rebuilt: list[EstimateLine] = []
     for ln in core:
+        if ln.resources:
+            ln.material_price, ln.labor_price, ln.machine_price = rollup(ln.resources)
         unit_cost = ln.material_price + ln.labor_price + ln.machine_price
         ln.total = round(ln.quantity * unit_cost)
         rebuilt.append(ln)
