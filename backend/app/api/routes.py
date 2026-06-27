@@ -33,21 +33,22 @@ async def create_estimate(inp: BuildingInput) -> dict:
     return {"job_id": runtime.id}
 
 
-@router.post("/estimate/sync", response_model=EstimateResult)
-def create_estimate_sync(
-    inp: BuildingInput, db: Session = Depends(get_db)
-) -> EstimateResult:
-    """Синхронный расчёт (без статусов) — для интеграций и тестов."""
+@router.post("/estimate/sync")
+def create_estimate_sync(inp: BuildingInput, db: Session = Depends(get_db)) -> dict:
+    """Synchronous calc — creates an Estimate container + initial version."""
+    from ..versioning import create_version
     profile = resolve_norm_profile(db, inp)
     result = build_estimate(db, inp, profile)
-    est = Estimate(
-        input=to_jsonable(inp),
-        result=to_jsonable(result),
-        total=result.totals.grand_total,
-    )
-    db.add(est)
+    estimate = Estimate(name=inp.project_name, object_type=inp.object_type, city=inp.city)
+    db.add(estimate)
+    db.flush()
+    version = create_version(db, estimate, inp, result, source="initial")
     db.commit()
-    return result
+    return {
+        "estimate_id": estimate.id,
+        "version_number": version.version_number,
+        "result": to_jsonable(result),
+    }
 
 
 @router.get("/estimate/{job_id}", response_model=JobStatus)
