@@ -11,6 +11,12 @@ function escapeHtml(v) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 }
 const escapeAttr = escapeHtml;
+const KIND_LABEL = { material: "матер.", labor: "труд", machine: "машина" };
+function statusBadge(status) {
+  return status === "calculated"
+    ? `<span class="sbadge ok">рассчитана</span>`
+    : `<span class="sbadge draft">черновик</span>`;
+}
 
 let toastTimer = null;
 function toast(message, isError = false) {
@@ -46,6 +52,8 @@ const Api = {
   deleteEstimate: (id) => api("DELETE", `/estimates/${id}`),
   calc: (id, input) => api("POST", `/estimates/${id}/calc`, input),
   manualEdit: (id, lines) => api("POST", `/estimates/${id}/manual-edit`, { lines }),
+  recommendations: (id) => api("GET", `/estimates/${id}/recommendations`),
+  addRecommendation: (id, key) => api("POST", `/estimates/${id}/recommendations`, { key }),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
   listChat: (id) => api("GET", `/estimates/${id}/chat`),
@@ -179,19 +187,18 @@ async function viewDashboard() {
     const rows = items.filter((it) =>
       !f || `${it.name} ${it.object_type} ${it.city}`.toLowerCase().includes(f));
     if (!rows.length) { listEl.innerHTML = `<div class="empty">Ничего нет. Создайте новую смету.</div>`; return; }
-    listEl.innerHTML = rows.map((it) => {
-      const dot = it.status === "calculated"
-        ? `<span class="dot-ok">● рассчитана</span>` : `<span class="dot-draft">○ черновик</span>`;
+    listEl.innerHTML = `<div class="list">` + rows.map((it) => {
       const total = it.status === "calculated" ? `${money(it.total)} ₸` : "—";
       return `<div class="row" data-id="${it.id}">
+        <div class="code">№ ${it.id}</div>
         <div class="main"><div class="name">${escapeHtml(it.name || "Без названия")}</div>
           <div class="meta">${escapeHtml(it.object_type || "—")} · ${escapeHtml(it.city || "—")}</div></div>
         <div class="amount"><div class="total">${total}</div>
           <div class="sub">v${it.version_count} · ${it.message_count} сообщ.</div></div>
-        <div class="status">${dot}</div>
+        <div class="status">${statusBadge(it.status)}</div>
         <button class="del" data-del="${it.id}" title="Удалить">✕</button>
       </div>`;
-    }).join("");
+    }).join("") + `</div>`;
     listEl.querySelectorAll(".row").forEach((r) => r.addEventListener("click", (ev) => {
       if (ev.target.dataset.del) return;
       location.hash = `#/estimate/${r.dataset.id}`;
@@ -224,7 +231,10 @@ let DETAIL = null; // {id, data, lines}
 async function viewDetail(id) {
   const data = await Api.getEstimate(id);
   const cv = data.current_version;
-  DETAIL = { id, data, lines: cv ? cv.result.lines.map((l) => ({ ...l })) : [] };
+  DETAIL = {
+    id, data, result: null, expanded: new Set(),
+    lines: cv ? cv.result.lines.map((l) => ({ ...l, resources: (l.resources || []).map((rr) => ({ ...rr })) })) : [],
+  };
   const inp = cv ? cv.input : DEFAULT_INPUT;
   const calculated = !!cv;
 
@@ -233,13 +243,13 @@ async function viewDetail(id) {
       <div class="breadcrumb"><a href="#/">Сметы</a> / ${escapeHtml(data.estimate.name)}</div>
       <div class="title-row">
         <input class="title-edit" id="titleEdit" value="${escapeAttr(data.estimate.name)}">
-        ${calculated ? `<span class="dot-ok" style="font-size:13px;font-weight:600">● рассчитана</span>`
-                     : `<span class="dot-draft" style="font-size:13px;font-weight:600">○ черновик</span>`}
+        ${statusBadge(calculated ? "calculated" : "draft")}
         <div class="toolbar">
           ${calculated ? `<select class="ver-select" id="verSel" title="Версии"></select>
           <button class="btn sm" id="exportBtn">Экспорт Word</button>` : ""}
         </div>
       </div>
+      <div class="sub-mono">№ ${id} · ${escapeHtml((inp && inp.city) || data.estimate.city || "—")}</div>
       <div class="detail">
         <div class="left">
           <details class="card" ${calculated ? "" : "open"}>
@@ -307,6 +317,7 @@ function listenJob(jobId, stepsEl, onDone, onEnd) {
 
 // ── estimate render (editable) ──
 function renderResult(r) {
+  DETAIL.result = r;
   const parts = [];
   if (r.warnings && r.warnings.length) {
     parts.push(`<div class="card"><h3>Предупреждения</h3><ul class="plain">` +
@@ -323,89 +334,154 @@ function renderResult(r) {
   // editable smeta
   parts.push(`<div class="card"><h3>Смета</h3>
     <div class="table-wrap"><table class="est"><thead><tr>
-      <th>№</th><th>Работа/ресурс</th><th>Ед.</th><th class="num">Объём</th>
-      <th class="num">Материал</th><th class="num">Работа</th><th class="num">Машины</th><th class="num">Итого ₸</th>
-    </tr></thead><tbody>${renderLines(r)}</tbody></table></div>
+      <th>№</th><th>Наименование</th><th>Ед.</th><th class="num">Кол-во</th>
+      <th class="num">Материал</th><th class="num">Работа</th><th class="num">Машины</th><th class="num">Сумма ₸</th>
+    </tr></thead><tbody id="smetaTbody">${renderLines(r)}</tbody></table></div>
     <div class="row-actions">
       <button class="btn accent" id="saveEditBtn">Сохранить правки</button>
-      <span class="hint">Поля «Объём» и цены редактируются — итоги пересчитает сервер, создаст новую версию.</span>
+      <span class="hint">Раскройте строку (▸) — правьте ресурсы (расход/цена), добавляйте «+ ресурс». Сервер пересчитает итоги и создаст версию.</span>
     </div></div>`);
   parts.push(renderTotals(r.totals));
-  parts.push(renderRecs());
+  parts.push(`<div id="recsCard"></div>`);
   document.getElementById("result").innerHTML = parts.join("");
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
-  document.querySelectorAll("[data-rec]").forEach((b) => b.addEventListener("click",
-    () => addRec(getRecommendations()[Number(b.dataset.rec)])));
+  wireTable();
+  loadRecs();
 }
 
-// ── recommendations (типовые позиции по нормам РК, часто не учтённые) ──
-const REC_SECTION = "Дополнительные позиции (рекомендации)";
-const REC_LIBRARY = [
-  { kw: ["геодез"], title: "Геодезические разбивочные работы", unit: "усл.", norm: "СН РК 1.02-03" },
-  { kw: ["временны", "подготов"], title: "Временные здания, дороги и площадки", unit: "усл.", norm: "СН РК 8.02-05" },
-  { kw: ["вертикальн", "планировк", "благоустр"], title: "Вертикальная планировка территории", unit: "м²", norm: "СН РК 3.01-01" },
-  { kw: ["лифт", "подъём"], title: "Лифты и подъёмное оборудование", unit: "шт", norm: "СН РК 3.02-01", floorsMin: 5 },
-  { kw: ["пожарн", "сигнал", "пожаротуш"], title: "Пожарная сигнализация и пожаротушение", unit: "усл.", norm: "СН РК 2.02-15" },
-  { kw: ["молниез", "заземл"], title: "Молниезащита и заземление", unit: "усл.", norm: "СО 153-34.21.122" },
-  { kw: ["пусконал", "наладк"], title: "Пусконаладочные работы инженерных систем", unit: "усл.", norm: "СН РК 8.02-05" },
-  { kw: ["надзор", "авторск"], title: "Авторский и технический надзор", unit: "усл.", norm: "СН РК 1.02-03" },
-];
-function getRecommendations() {
-  const lines = DETAIL.lines || [];
-  const hay = lines.map((l) => `${l.title} ${l.section}`.toLowerCase()).join(" | ");
-  const cv = DETAIL.data.current_version;
-  const floors = (cv && cv.input && cv.input.floors) || 0;
-  return REC_LIBRARY.filter((r) => {
-    if (r.floorsMin && floors < r.floorsMin) return false;
-    return !r.kw.some((k) => hay.includes(k));
-  });
-}
-function renderRecs() {
-  const recs = getRecommendations();
-  if (!recs.length) return "";
-  return `<div class="card"><h3>Рекомендации — что может быть не учтено</h3>
+// ── recommendations (типовые позиции по нормам РК, считает сервер) ──
+async function loadRecs() {
+  const el = document.getElementById("recsCard");
+  if (!el) return;
+  let recs = [];
+  try { recs = await Api.recommendations(DETAIL.id); } catch (e) { el.innerHTML = ""; return; }
+  if (!recs.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="card"><h3>Рекомендации — что может быть не учтено</h3>
     <div class="hint">Типовые позиции по нормам РК (СН РК/ГОСТ), часто отсутствующие в предварительной смете.
-    «Добавить в смету» создаёт строку с нулевой ценой — уточните объём и стоимость.</div>
-    <ul class="rec-list">${recs.map((r, i) => `<li>
-      <div><strong>${escapeHtml(r.title)}</strong> <span class="nrm">· ${escapeHtml(r.norm)} · ${escapeHtml(r.unit)}</span></div>
-      <button class="btn sm" data-rec="${i}">Добавить в смету</button></li>`).join("")}</ul></div>`;
+    «Добавить в смету» сразу создаёт строку с рассчитанной стоимостью (укрупнённо) — её можно уточнить.</div>
+    <ul class="rec-list">${recs.map((r) => `<li>
+      <div><strong>${escapeHtml(r.title)}</strong>
+        <span class="nrm">· ${escapeHtml(r.norm)} · ${money(r.quantity)} ${escapeHtml(r.unit)} · ≈ ${money(r.estimated_total)} ₸</span>
+        <div class="hint">${escapeHtml(r.basis)}</div></div>
+      <button class="btn sm" data-reckey="${escapeAttr(r.key)}">Добавить в смету</button></li>`).join("")}</ul></div>`;
+  el.querySelectorAll("[data-reckey]").forEach((b) =>
+    b.addEventListener("click", () => addRec(b.dataset.reckey)));
 }
-async function addRec(rec) {
-  if (!rec) return;
-  const n = DETAIL.lines.filter((l) => l.section === REC_SECTION).length + 1;
-  DETAIL.lines.push({
-    no: `15.${n}`, section: REC_SECTION, title: rec.title, norm: rec.norm, unit: rec.unit,
-    quantity: 1, material_price: 0, labor_price: 0, machine_price: 0, total: 0,
-    needs_review: true, comment: "добавлено из рекомендаций — уточнить объём и цену",
-  });
+async function addRec(key) {
+  if (!key) return;
   try {
-    await Api.manualEdit(DETAIL.id, DETAIL.lines);
-    toast("Добавлено в смету — уточните цену");
+    await Api.addRecommendation(DETAIL.id, key);
+    toast("Добавлено в смету — стоимость рассчитана, можно уточнить");
     render();
   } catch (e) { toast(e.detail || "Ошибка", true); }
+}
+function previewTotal(ln) {
+  const unit = (ln.resources || []).reduce(
+    (s, res) => s + (Number(res.consumption) || 0) * (Number(res.price) || 0), 0);
+  return Math.round((Number(ln.quantity) || 0) * unit);
+}
+function resRow(i, j, ln, res) {
+  const q = (Number(res.consumption) || 0) * (Number(ln.quantity) || 0);
+  const total = Math.round(q * (Number(res.price) || 0));
+  const kindSel = ["material", "labor", "machine"].map((k) =>
+    `<option value="${k}" ${k === res.kind ? "selected" : ""}>${KIND_LABEL[k]}</option>`).join("");
+  const ed = (key, cls) => `<input class="res-edit ${cls || ""}" data-li="${i}" data-ri="${j}" data-key="${key}" value="${escapeAttr(res[key])}">`;
+  return `<tr class="res-row"><td></td><td colspan="7"><div class="res-cell">
+    <select class="res-edit rkindsel" data-li="${i}" data-ri="${j}" data-key="kind">${kindSel}</select>
+    ${ed("name", "rname-in")}
+    <span class="rsub">расход ${ed("consumption")} ${ed("unit", "unit-in")}/${escapeHtml(ln.unit)}
+      · объём <b>${money(q)}</b>
+      · цена ${ed("price", "wide")} ₸
+      · = <span class="rsum">${money(total)} ₸</span></span>
+    <button class="res-del" data-del-res="${i}:${j}" title="Удалить ресурс">✕</button>
+  </div></td></tr>`;
+}
+function resAddRow(i) {
+  return `<tr class="res-add"><td></td><td colspan="7"><div class="res-add-bar">
+    <button class="btn sm tint" data-add-res="${i}">+ ресурс</button>
+    <span class="hint" style="margin:0">сумма строки = объём × Σ(расход × цена)</span>
+  </div></td></tr>`;
 }
 function renderLines(r) {
   const rows = [];
   let section = null;
+  let sIdx = 0;
   DETAIL.lines.forEach((ln, i) => {
     if (ln.section !== section) {
-      section = ln.section;
+      section = ln.section; sIdx += 1;
       const sub = r.section_totals[ln.section];
-      rows.push(`<tr class="section-row"><td></td><td colspan="6">${escapeHtml(ln.section)}</td>
-        <td class="num">${sub != null ? money(sub) : ""}</td></tr>`);
+      rows.push(`<tr class="section-row"><td class="snum">${sIdx}</td><td colspan="6">${escapeHtml(ln.section)}</td>
+        <td class="num">${sub != null ? money(sub) + " ₸" : ""}</td></tr>`);
     }
-    const cell = (key, w) => `<input class="cell-edit" data-li="${i}" data-key="${key}" value="${escapeAttr(ln[key])}">`;
+    const hasRes = !!(ln.resources && ln.resources.length);
+    const expanded = DETAIL.expanded.has(i);
+    const qtyCell = `<input class="cell-edit" data-li="${i}" data-key="quantity" value="${escapeAttr(ln.quantity)}">`;
+    const priceCell = (key) => hasRes
+      ? `<span class="price">${money(ln[key])}</span>`
+      : `<input class="cell-edit" data-li="${i}" data-key="${key}" value="${escapeAttr(ln[key])}">`;
+    const tog = hasRes ? `<span class="tog" data-tog="${i}">${expanded ? "▾" : "▸"}</span> ` : "";
+    const lineTotal = hasRes ? previewTotal(ln) : ln.total;
     rows.push(`<tr class="${ln.needs_review ? "review" : ""}">
-      <td>${escapeHtml(ln.no)}</td>
-      <td>${escapeHtml(ln.title)}${ln.needs_review ? ' <span class="badge">проверить</span>' : ""}</td>
+      <td class="no">${escapeHtml(ln.no)}</td>
+      <td>${tog}${escapeHtml(ln.title)}${ln.needs_review ? ' <span class="badge">проверить</span>' : ""}</td>
       <td>${escapeHtml(ln.unit)}</td>
-      <td class="num">${cell("quantity")}</td>
-      <td class="num">${cell("material_price")}</td>
-      <td class="num">${cell("labor_price")}</td>
-      <td class="num">${cell("machine_price")}</td>
-      <td class="num">${money(ln.total)}</td></tr>`);
+      <td class="num">${qtyCell}</td>
+      <td class="num">${priceCell("material_price")}</td>
+      <td class="num">${priceCell("labor_price")}</td>
+      <td class="num">${priceCell("machine_price")}</td>
+      <td class="num sum">${money(lineTotal)}</td></tr>`);
+    if (hasRes && expanded) {
+      ln.resources.forEach((res, j) => rows.push(resRow(i, j, ln, res)));
+      rows.push(resAddRow(i));
+    }
   });
   return rows.join("");
+}
+function syncEdits() {
+  document.querySelectorAll("#smetaTbody .cell-edit").forEach((el) => {
+    const ln = DETAIL.lines[Number(el.dataset.li)];
+    if (ln) ln[el.dataset.key] = Number(el.value || 0);
+  });
+  document.querySelectorAll("#smetaTbody .res-edit").forEach((el) => {
+    const ln = DETAIL.lines[Number(el.dataset.li)];
+    const res = ln && ln.resources && ln.resources[Number(el.dataset.ri)];
+    if (!res) return;
+    const k = el.dataset.key;
+    res[k] = (k === "consumption" || k === "price") ? Number(el.value || 0) : el.value;
+  });
+}
+function rerenderTbody() {
+  const tb = document.getElementById("smetaTbody");
+  if (!tb || !DETAIL.result) return;
+  tb.innerHTML = renderLines(DETAIL.result);
+  wireTable();
+}
+function wireTable() {
+  const tb = document.getElementById("smetaTbody");
+  if (!tb) return;
+  tb.querySelectorAll("[data-tog]").forEach((el) => el.addEventListener("click", () => {
+    const i = Number(el.dataset.tog);
+    if (DETAIL.expanded.has(i)) DETAIL.expanded.delete(i); else DETAIL.expanded.add(i);
+    rerenderTbody();
+  }));
+  tb.querySelectorAll("[data-add-res]").forEach((b) => b.addEventListener("click", () => {
+    syncEdits();
+    const i = Number(b.dataset.addRes);
+    const ln = DETAIL.lines[i];
+    ln.resources = ln.resources || [];
+    ln.resources.push({ code: "res_" + Date.now(), name: "Новый ресурс", kind: "material",
+                        unit: ln.unit || "ед", consumption: 0, price: 0 });
+    DETAIL.expanded.add(i);
+    rerenderTbody();
+  }));
+  tb.querySelectorAll("[data-del-res]").forEach((b) => b.addEventListener("click", () => {
+    syncEdits();
+    const parts = b.dataset.delRes.split(":");
+    const ln = DETAIL.lines[Number(parts[0])];
+    if (ln && ln.resources) { ln.resources.splice(Number(parts[1]), 1); rerenderTbody(); }
+  }));
+  tb.querySelectorAll(".cell-edit, .res-edit").forEach((el) =>
+    el.addEventListener("change", () => { syncEdits(); rerenderTbody(); }));
 }
 function renderTotals(t) {
   if (!t) return "";
@@ -419,10 +495,7 @@ function renderTotals(t) {
   </div></div>`;
 }
 async function saveManualEdit() {
-  document.querySelectorAll(".cell-edit").forEach((el) => {
-    const ln = DETAIL.lines[Number(el.dataset.li)];
-    if (ln) ln[el.dataset.key] = Number(el.value || 0);
-  });
+  syncEdits();
   try {
     await Api.manualEdit(DETAIL.id, DETAIL.lines);
     toast("Правки сохранены — создана новая версия");
@@ -512,11 +585,22 @@ function bubble(m) {
 // ── Word export (landscape .doc via Office-HTML) ──
 function exportDocx(r) {
   const t = r.totals || {};
-  const rows = (r.lines || []).map((l) => `<tr>
-    <td>${escapeHtml(l.no)}</td><td>${escapeHtml(l.title)}</td><td>${escapeHtml(l.norm || "")}</td>
-    <td>${escapeHtml(l.unit)}</td><td class="n">${qty(l.quantity)}</td>
-    <td class="n">${money(l.material_price)}</td><td class="n">${money(l.labor_price)}</td>
-    <td class="n">${money(l.machine_price)}</td><td class="n">${money(l.total)}</td></tr>`).join("");
+  const rows = (r.lines || []).map((l) => {
+    let h = `<tr>
+      <td>${escapeHtml(l.no)}</td><td>${escapeHtml(l.title)}</td><td>${escapeHtml(l.norm || "")}</td>
+      <td>${escapeHtml(l.unit)}</td><td class="n">${qty(l.quantity)}</td>
+      <td class="n">${money(l.material_price)}</td><td class="n">${money(l.labor_price)}</td>
+      <td class="n">${money(l.machine_price)}</td><td class="n">${money(l.total)}</td></tr>`;
+    (l.resources || []).forEach((res) => {
+      const q = (Number(res.consumption) || 0) * (Number(l.quantity) || 0);
+      const tot = Math.round(q * (Number(res.price) || 0));
+      h += `<tr class="res"><td></td>
+        <td class="ri">${escapeHtml(res.name)} — <i>${escapeHtml(KIND_LABEL[res.kind] || res.kind)}</i>, ${money(res.price)} ₸/${escapeHtml(res.unit)}</td>
+        <td></td><td>${escapeHtml(res.unit)}</td><td class="n">${qty(q)}</td>
+        <td></td><td></td><td></td><td class="n">${money(tot)}</td></tr>`;
+    });
+    return h;
+  }).join("");
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
     xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
     <head><meta charset="utf-8">
@@ -532,6 +616,8 @@ function exportDocx(r) {
       th { background: #eee; font-weight: bold; }
       td.n, th.n { text-align: right; mso-number-format: "\\#\\,\\#\\#0"; }
       .tot { margin-top: 12pt; font-size: 11pt; }
+      tr.res td { color: #555; font-size: 8.5pt; }
+      td.ri { padding-left: 14pt; }
     </style></head>
     <body><div class="Section1">
       <h1>${escapeHtml(r.project_name)}</h1>

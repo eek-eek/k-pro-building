@@ -284,6 +284,15 @@ ul.steps .mark { width: 18px; text-align: center; font-family: var(--mono); }
 .row-actions { display: flex; gap: 10px; align-items: center; margin: 14px 0 4px; flex-wrap: wrap; }
 .span-2 { grid-column: 1 / -1; }
 
+/* resource inline inputs — scoped to beat global input rules by specificity */
+.res-cell .res-edit { width: 64px; text-align: right; font-family: var(--mono); font-size: 12px;
+  border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 6px; background: var(--surface); }
+.res-cell .res-edit:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); }
+.res-cell .res-edit.wide { width: 88px; }
+.res-cell .rname-in { width: 180px; text-align: left; font-family: var(--font); }
+.res-cell .unit-in { width: 58px; text-align: left; font-family: var(--font); }
+.res-cell .rkindsel { width: 88px; text-align: left; padding: 2px 6px; font-family: var(--font); }
+
 @media (max-width: 920px) {
   h1.title { font-size: 34px; }
   .detail { flex-direction: column; }
