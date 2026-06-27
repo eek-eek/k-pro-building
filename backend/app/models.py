@@ -229,5 +229,10 @@ class BuildingObject(Base):
     source: Mapped[str] = mapped_column(String(16), default="manual")  # manual|auto
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    zone_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # allowed|restricted|unknown
+    zone_land_use: Mapped[str] = mapped_column(Text, default="")
+    zone_kad_nomer: Mapped[str] = mapped_column(String(64), default="")
+    zone_note: Mapped[str] = mapped_column(Text, default="")
+    zone_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

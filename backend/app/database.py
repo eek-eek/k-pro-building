@@ -53,6 +53,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_estimate_object_id()
+    _ensure_building_object_zone_cols()
 
 
 def _ensure_estimate_object_id() -> None:
@@ -64,3 +65,22 @@ def _ensure_estimate_object_id() -> None:
         cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(estimates)")]
         if cols and "object_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE estimates ADD COLUMN object_id INTEGER")
+
+
+def _ensure_building_object_zone_cols() -> None:
+    """Идемпотентно добавить zone_* в building_objects (SQLite create_all не
+    добавляет колонки в существующую таблицу — БД dev из SP1 их не имеет)."""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    add = {
+        "zone_status": "VARCHAR(16)", "zone_land_use": "TEXT DEFAULT ''",
+        "zone_kad_nomer": "VARCHAR(64) DEFAULT ''", "zone_note": "TEXT DEFAULT ''",
+        "zone_checked_at": "DATETIME",
+    }
+    with engine.begin() as conn:
+        cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(building_objects)")]
+        if not cols:
+            return
+        for name, ddl in add.items():
+            if name not in cols:
+                conn.exec_driver_sql(f"ALTER TABLE building_objects ADD COLUMN {name} {ddl}")

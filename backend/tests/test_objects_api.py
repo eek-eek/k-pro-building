@@ -30,6 +30,14 @@ def test_building_object_table_and_estimate_fk():
         db.close()
 
 
+def test_building_object_has_zone_columns():
+    run_seed()
+    with engine.begin() as conn:
+        cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(building_objects)")]
+    for c in ("zone_status", "zone_land_use", "zone_kad_nomer", "zone_note", "zone_checked_at"):
+        assert c in cols, f"нет колонки {c}"
+
+
 def test_object_crud():
     oid = client.post("/api/objects", json={
         "name": "Участок-1", "city": "Алматы", "lat": 43.24, "lon": 76.9, "polygon": POLY}).json()["id"]
