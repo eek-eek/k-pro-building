@@ -944,5 +944,85 @@ async function drawObjList() {
   }));
 }
 
+async function viewObject(id) {
+  const data = await Api.getObject(id);
+  const o = data.object;
+  APP().innerHTML = `
+    <div class="page">
+      <div class="breadcrumb"><a href="#/objects">Объекты</a> / ${escapeHtml(o.name)}</div>
+      <div class="title-row"><input class="title-edit" id="objTitle" value="${escapeAttr(o.name)}">
+        ${statusBadge(o.status === "selected" ? "calculated" : "draft")}</div>
+      <div class="sub-mono">№ ${o.id} · ${escapeHtml(o.city)} · ${money(o.area_m2)} м²</div>
+      <div class="detail"><div class="left">
+        <div id="omap" class="map-mini"></div>
+        <div id="conceptBox"></div>
+        <div class="card"><h3>Сметы объекта</h3><div id="objEsts"></div></div>
+      </div></div>
+    </div>`;
+  // карта с контуром
+  const layers = baseLayers();
+  const map = L.map("omap", { layers: [layers["Спутник"]] }).setView([o.lat, o.lon], 16);
+  L.control.layers(layers).addTo(map);
+  if (data.polygon) {
+    const gj = L.geoJSON(data.polygon, { style: { color: "#2C5BA8", weight: 2 } }).addTo(map);
+    map.fitBounds(gj.getBounds(), { padding: [20, 20] });
+  } else { L.marker([o.lat, o.lon]).addTo(map); }
+
+  document.getElementById("objTitle").addEventListener("change", async (ev) => {
+    await Api.patchObject(id, { name: ev.target.value }); toast("Сохранено");
+  });
+
+  // список смет объекта
+  const estsEl = document.getElementById("objEsts");
+  estsEl.innerHTML = data.estimates.length
+    ? data.estimates.map((e) => `<div class="row" data-eid="${e.id}">
+        <div class="main"><div class="name">${escapeHtml(e.name)}</div></div>
+        <div class="amount"><div class="total">${e.status === "calculated" ? money(e.total) + " ₸" : "—"}</div></div>
+      </div>`).join("")
+    : `<div class="hint">Смет ещё нет — создайте из концепта ниже.</div>`;
+  estsEl.querySelectorAll("[data-eid]").forEach((r) =>
+    r.addEventListener("click", () => { location.hash = `#/estimate/${r.dataset.eid}`; }));
+
+  await renderConcept(id, o.city);
+}
+
+async function renderConcept(id, city) {
+  const box = document.getElementById("conceptBox");
+  box.innerHTML = `<div class="concept-panel"><h3>Концепт здания</h3>
+    <div class="obj-form">
+      <div class="field"><label>Тип объекта</label><select id="cType">
+        <option>Жилой дом</option><option>Общественное здание</option><option>Промышленное здание</option></select></div>
+      <button class="btn" id="cReload">Предложить</button>
+    </div>
+    <div id="cFields" class="hint">Нажмите «Предложить», чтобы система рассчитала параметры под участок.</div>
+    <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
+  </div>`;
+  let concept = null;
+  const load = async () => {
+    concept = await Api.objectConcept(id, document.getElementById("cType").value);
+    document.getElementById("cFields").innerHTML = `<div class="grid">
+      ${cField("Этажность", "floors", concept.floors)}
+      ${cField("Габарит длина, м", "building_length", concept.building_length)}
+      ${cField("Габарит ширина, м", "building_width", concept.building_width)}
+      ${cField("Общая площадь, м²", "total_area", concept.total_area)}
+    </div>`;
+    document.getElementById("cToEstimate").disabled = false;
+  };
+  document.getElementById("cReload").addEventListener("click", load);
+  document.getElementById("cToEstimate").addEventListener("click", async () => {
+    document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
+      concept[el.dataset.ck] = Number(el.value || 0);
+    });
+    const { estimate_id } = await Api.objectCreateEstimate(id, concept);
+    toast("Смета создана из концепта");
+    location.hash = `#/estimate/${estimate_id}`;
+  });
+  await load();
+}
+function cField(label, key, val) {
+  return `<div class="field"><label>${label}</label>
+    <input type="number" step="0.1" data-ck="${key}" value="${escapeAttr(val)}"></div>`;
+}
+
 // ───────────────────────── init ─────────────────────────
 render();
