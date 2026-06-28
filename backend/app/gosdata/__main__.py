@@ -1,17 +1,17 @@
-"""CLI импорта: python -m app.gosdata <generalized|resources> <csv-файл>."""
+"""CLI импорта: python -m app.gosdata <resources> <csv-файл>."""
 from __future__ import annotations
 
 import sys
 
 from ..database import SessionLocal
-from .core import run_import_generalized, run_import_resources
+from .core import run_import_resources
 
-_RUNNERS = {"generalized": run_import_generalized, "resources": run_import_resources}
+_RUNNERS = {"resources": run_import_resources}
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] not in _RUNNERS:
-        print("Использование: python -m app.gosdata <generalized|resources> <csv-файл>")
+        print("Использование: python -m app.gosdata <resources> <csv-файл>")
         return 2
     target, path = argv[1], argv[2]
     try:

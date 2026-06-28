@@ -12,7 +12,6 @@ from ..schemas import (
     EstimateTotals,
     NormProfile,
 )
-from .generalized import compute_cost_anchor
 from .geometry import derive
 from .pricing import get_price
 from .resource_catalog import db_snapshot_for, rollup
@@ -70,10 +69,37 @@ def _section_included(section_match: list[str], works_lc: list[str]) -> bool:
     return False
 
 
+def _ru_int(x: float) -> str:
+    """Целое с пробелами-разделителями разрядов (ru-формат)."""
+    return f"{int(round(x)):,}".replace(",", " ")
+
+
+def _clamp_total_area(inp: BuildingInput, geo) -> str | None:
+    """Контроль общей площади: не больше физического максимума
+    (площадь застройки × этажность). При превышении — обрезает inp.total_area
+    до максимума и возвращает предупреждение. Если габариты не заданы
+    (застройка ≤ 0), максимум не определить — площадь не трогаем."""
+    if geo.build_area <= 0:
+        return None
+    max_area = round(geo.build_area * geo.floors)
+    if inp.total_area <= max_area:
+        return None
+    old = inp.total_area
+    inp.total_area = float(max_area)
+    return (
+        f"Общая площадь {_ru_int(old)} м² превышает физический максимум при заданных "
+        f"габаритах и этажности: застройка {_ru_int(geo.build_area)} м² × {geo.floors} эт. "
+        f"= {_ru_int(max_area)} м². Площадь автоматически уменьшена до {_ru_int(max_area)} м²."
+    )
+
+
 def build_estimate(
     db: Session, inp: BuildingInput, profile: NormProfile
 ) -> EstimateResult:
     geo = derive(inp)
+    area_warning = _clamp_total_area(inp, geo)
+    if area_warning:
+        geo = derive(inp)  # пересчёт геометрии под скорректированную площадь
     volumes = compute_volumes(inp, profile, geo)
     region = inp.city.split("/")[0].strip() or "KZ"
 
@@ -176,6 +202,8 @@ def build_estimate(
         "Не является основанием для договоров подряда — только для предварительной "
         "оценки и сравнения предложений.",
     ]
+    if area_warning:
+        warnings.insert(0, area_warning)
     if review_count:
         warnings.append(
             f"Позиций, требующих проверки сметчиком: {review_count}. "
@@ -195,16 +223,6 @@ def build_estimate(
     elif (profile.cross_check and profile.cross_check.enabled
           and not profile.cross_check.ran and profile.cross_check.reason):
         warnings.append(f"Кросс-проверка включена, но не выполнена: {profile.cross_check.reason}.")
-
-    # Укрупнённый ориентир РК (НДЦС/УСН) — сверка ресурсной сметы; не меняет итоги.
-    cost_anchor = compute_cost_anchor(db, inp, totals.grand_total)
-    if cost_anchor is not None and abs(cost_anchor.deviation_pct) > 25:
-        val_str = f"{cost_anchor.value:,.0f}".replace(",", " ")  # ru-формат (пробелы)
-        warnings.append(
-            f"Ресурсная смета отклоняется от укрупнённого ориентира РК на "
-            f"{cost_anchor.deviation_pct:+.0f}% (укрупнённо ≈ {val_str} ₸"
-            + ("; предварительный показатель" if cost_anchor.provisional else "") + ")."
-        )
 
     clarifications = [
         "Полный комплект проектной документации (АР, КР, ОВиК, ВК, ЭОМ, СС).",
@@ -227,7 +245,6 @@ def build_estimate(
         lines=lines,
         section_totals=section_totals,
         totals=totals,
-        cost_anchor=cost_anchor,
         contractor_questions=CONTRACTOR_QUESTIONS,
         clarifications=clarifications,
         generated_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -294,19 +311,10 @@ def recompute_estimate(
         contingency_pct=inp.contingency_pct, subtotal_with_contingency=subtotal2,
         vat=vat, vat_pct=inp.vat_pct, grand_total=grand,
     )
-    # перенести укрупнённый якорь, пересчитав отклонение от нового итога
-    anchor = prev.cost_anchor
-    if anchor is not None:
-        anchor = anchor.model_copy(update={
-            "resource_grand": round(grand),
-            "deviation_pct": round((grand - anchor.value) / anchor.value * 100, 1)
-                              if anchor.value else 0.0,
-        })
     return EstimateResult(
         project_name=prev.project_name, city=prev.city, object_type=prev.object_type,
         precision_class=prev.precision_class, warnings=prev.warnings,
         sources=prev.sources, volumes=prev.volumes, lines=final_lines,
-        cost_anchor=anchor,
         section_totals=section_totals, totals=totals,
         contractor_questions=prev.contractor_questions,
         clarifications=prev.clarifications,

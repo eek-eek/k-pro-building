@@ -103,8 +103,8 @@ function inputsForm(inp) {
   const sel = (id, key) => `<div class="field"><label>${id}</label><select data-in="${key}">` +
     SELECTS[key].map((o) => `<option ${o === v[key] ? "selected" : ""}>${escapeHtml(o)}</option>`).join("") +
     `</select></div>`;
-  const num = (label, key, step) => `<div class="field"><label>${label}</label>` +
-    `<input type="number" step="${step || 1}" data-in="${key}" value="${escapeAttr(v[key])}"></div>`;
+  const num = (label, key, step, min) => `<div class="field"><label>${label}</label>` +
+    `<input type="number" step="${step || 1}"${min !== undefined ? ` min="${min}"` : ""} data-in="${key}" value="${escapeAttr(v[key])}"></div>`;
   const txt = (label, key) => `<div class="field"><label>${label}</label>` +
     `<input type="text" data-in="${key}" value="${escapeAttr(v[key])}"></div>`;
   const formSel = `<div class="field"><label>Форма здания</label><select data-in="form">` +
@@ -116,7 +116,7 @@ function inputsForm(inp) {
       ${txt("Город / регион РК", "city")}
       ${sel("Тип объекта", "object_type")}
       ${formSel}
-      ${num("Этажность", "floors")}
+      ${num("Этажность", "floors", 1, 1)}
       ${num("Общая площадь, м²", "total_area")}
       ${num("Габарит длина, м", "building_length", "0.1")}
       ${num("Габарит ширина, м", "building_width", "0.1")}
@@ -145,10 +145,19 @@ function collectInputs(root) {
   root.querySelectorAll("[data-in]").forEach((el) => {
     const key = el.dataset.in;
     if (el.type === "checkbox") out[key] = el.checked;
-    else if (el.type === "number") out[key] = Number(el.value || 0);
+    else if (el.type === "number")
+      out[key] = key === "floors" ? Math.max(1, Math.round(Number(el.value || 0))) : Number(el.value || 0);
     else out[key] = el.value;
   });
   return out;
+}
+
+// Этажи — только целые: снап поля к целому ≥1 при изменении.
+function snapFloorsToInt(el) {
+  if (!el) return;
+  el.addEventListener("change", () => {
+    if (el.value !== "") el.value = Math.max(1, Math.round(Number(el.value) || 1));
+  });
 }
 
 // ───────────────────────── router ─────────────────────────
@@ -358,6 +367,7 @@ async function viewDetail(id) {
       el.addEventListener("input", drawSmetaMassing);
       el.addEventListener("change", drawSmetaMassing);
     });
+    snapFloorsToInt(document.querySelector('#inputs [data-in="floors"]'));
     drawSmetaMassing();
   }
   renderChat(id, calculated);
@@ -475,7 +485,7 @@ function renderResult(r) {
       <button class="btn sm" id="satuBtn" title="Обновить цены материалов из Satu.kz (розница)">Цены материалов: Satu</button>
       <span class="hint">Раскройте строку (▸) — правьте ресурсы (расход/цена), добавляйте «+ ресурс». Сервер пересчитает итоги и создаст версию.</span>
     </div></div>`);
-  parts.push(renderTotals(r.totals, r.cost_anchor));
+  parts.push(renderTotals(r.totals));
   parts.push(`<div id="recsCard"></div>`);
   document.getElementById("result").innerHTML = parts.join("");
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
@@ -667,29 +677,16 @@ function wireTable() {
   tb.querySelectorAll(".cell-edit, .res-edit").forEach((el) =>
     el.addEventListener("change", () => { syncEdits(); rerenderTbody(); }));
 }
-function renderTotals(t, anchor) {
+function renderTotals(t) {
   if (!t) return "";
   const row = (label, val, cls = "") => `<div class="t-row ${cls}"><span>${label}</span><span>${money(val)} ₸</span></div>`;
-  let anchorHtml = "";
-  if (anchor && anchor.value) {
-    const dev = anchor.deviation_pct;
-    const devCls = Math.abs(dev) > 25 ? "warn" : "ok";
-    const prov = anchor.provisional ? ` <span class="badge">предварительно</span>` : "";
-    const src = anchor.source_code ? ` · источник: ${escapeHtml(anchor.source_code)}` : "";
-    anchorHtml = `<div class="anchor-box">
-      <div class="anchor-head">Укрупнённый ориентир РК${prov}</div>
-      <div class="t-row"><span>Укрупнённо (${escapeHtml(anchor.unit)} × показатель)</span><span>${money(anchor.value)} ₸</span></div>
-      <div class="t-row ${devCls}"><span>Отклонение ресурсной сметы</span><span>${dev > 0 ? "+" : ""}${dev}%</span></div>
-      <div class="hint" style="margin-top:6px">${escapeHtml(anchor.note || "")}${src}</div>
-    </div>`;
-  }
   return `<div class="card"><h3>Итоги</h3><div class="totals">
     ${row("Прямые затраты", t.direct)}
     ${row(`Накладные (${t.overhead_pct}%)`, t.overhead)}
     ${row(`Резерв (${t.contingency_pct}%)`, t.contingency)}
     ${row(`НДС (${t.vat_pct}%)`, t.vat)}
     ${row("ИТОГО с НДС", t.grand_total, "grand")}
-  </div>${anchorHtml}</div>`;
+  </div></div>`;
 }
 async function saveManualEdit() {
   syncEdits();
@@ -1268,6 +1265,7 @@ async function renderConcept(id, city, estimates) {
       // живое обновление 3D-макета при правке габарита/этажности
       document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
         el.addEventListener("input", () => drawMassing()));
+      snapFloorsToInt(document.querySelector('#cFields [data-ck="floors"]'));
       drawMassing();
     } catch (e) {
       document.getElementById("cFields").innerHTML =
@@ -1286,21 +1284,30 @@ async function renderConcept(id, city, estimates) {
       return;
     }
     document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
-      concept[el.dataset.ck] = Number(el.value || 0);
+      const val = Number(el.value || 0);
+      concept[el.dataset.ck] = el.dataset.ck === "floors" ? Math.max(1, Math.round(val)) : val;
     });
+    const btn = document.getElementById("cToEstimate");
+    btn.disabled = true;
+    const stepsEl = showCalcOverlay();
+    stepsEl.innerHTML = `<li class="running"><span class="mark">…</span><span>Запуск расчёта…</span></li>`;
     try {
-      const { estimate_id } = await Api.objectCreateEstimate(id, concept);
-      toast("Смета создана из концепта");
-      location.hash = `#/estimate/${estimate_id}`;
+      const { job_id, estimate_id } = await Api.objectCreateEstimate(id, concept);
+      listenJob(job_id, stepsEl,
+        () => { hideCalcOverlay(); toast("Смета создана из концепта"); location.hash = `#/estimate/${estimate_id}`; },
+        () => { hideCalcOverlay(); btn.disabled = false; });
     } catch (e) {
+      hideCalcOverlay();
+      btn.disabled = false;
       toast("Не удалось создать смету: " + (e.detail || ""), true);
     }
   });
   await load();
 }
 function cField(label, key, val) {
+  const attrs = key === "floors" ? `step="1" min="1"` : `step="0.1"`;  // этажи — целые
   return `<div class="field"><label>${label}</label>
-    <input type="number" step="0.1" data-ck="${key}" value="${escapeAttr(val)}"></div>`;
+    <input type="number" ${attrs} data-ck="${key}" value="${escapeAttr(val)}"></div>`;
 }
 
 // ── 3D-макет здания (массинг) на Three.js ──

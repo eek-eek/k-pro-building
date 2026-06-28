@@ -368,10 +368,3 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 .home-steps span { font-weight: 700; color: var(--text); margin-right: 8px; }
 .home-steps b { color: var(--accent); font-family: var(--mono); }
 @media (max-width: 720px) { .home-cards { grid-template-columns: 1fr; } }
-
-/* Укрупнённый ориентир РК (якорь-сверка) в карточке Итоги */
-.anchor-box { margin-top: 12px; padding: 10px 12px; background: var(--warn-bg); border-radius: 8px; }
-.anchor-head { font-weight: 600; margin-bottom: 6px; }
-.anchor-box .t-row { display: flex; justify-content: space-between; padding: 2px 0; }
-.anchor-box .t-row.warn span:last-child { color: var(--danger); font-weight: 600; }
-.anchor-box .t-row.ok span:last-child { color: var(--ok); font-weight: 600; }
