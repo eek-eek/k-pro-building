@@ -39,8 +39,12 @@ def test_test_connection_demo_returns_not_ok():
     assert r["ok"] is False
 
 
-def test_settings_and_prompts_require_auth():
+def test_settings_writes_and_prompts_require_auth():
     anon = TestClient(app)   # без заголовка авторизации
-    assert anon.get("/api/settings").status_code == 401
+    # GET настроек открыт (маскированный) — нужен чату/навбару:
+    assert anon.get("/api/settings").status_code == 200
+    # запись настроек и промпты — закрыты:
     assert anon.put("/api/settings", json={"provider": "demo"}).status_code == 401
+    assert anon.post("/api/settings/test", json={"provider": "demo"}).status_code == 401
     assert anon.get("/api/prompts").status_code == 401
+    assert anon.put("/api/prompts/x", json={"body": "y"}).status_code == 401

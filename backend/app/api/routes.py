@@ -444,7 +444,9 @@ def post_chat(estimate_id: int, body: ChatPost, db: Session = Depends(get_db)) -
 
 
 @router.get("/settings")
-def get_settings_api(db: Session = Depends(get_db), _a: None = Depends(require_admin)) -> dict:
+def get_settings_api(db: Session = Depends(get_db)) -> dict:
+    # GET открыт намеренно: ключ маскирован, а провайдер нужен чату/навбару.
+    # Запись настроек и промпты — под require_admin.
     eff = get_effective_settings(db)
     return {
         "provider": eff.llm_provider,
