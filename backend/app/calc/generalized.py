@@ -5,10 +5,13 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import GeneralizedIndicator
+from ..schemas import BuildingInput, CostAnchor
 
 GENERALIZED_PRICE_LEVEL = "НДЦС-2025-предварительно"
 
@@ -43,3 +46,38 @@ def seed_generalized_indicators(db: Session, region: str = "KZ") -> None:
             source_code=_SEED_SOURCE, note=_SEED_NOTE, needs_review=True,
         ))
     db.commit()
+
+
+def resolve_generalized_indicator(
+    db: Session, inp: BuildingInput
+) -> Optional[GeneralizedIndicator]:
+    """Найти укрупнённый показатель под объект: регион города → KZ."""
+    region = inp.city.split("/")[0].strip() or "KZ"
+    for reg in (region, "KZ"):
+        row = db.scalar(
+            select(GeneralizedIndicator).where(
+                GeneralizedIndicator.object_type == inp.object_type,
+                GeneralizedIndicator.region == reg,
+            )
+        )
+        if row is not None:
+            return row
+    return None
+
+
+def compute_cost_anchor(
+    db: Session, inp: BuildingInput, resource_grand: float
+) -> Optional[CostAnchor]:
+    """Укрупнённый ориентир + отклонение ресурсной сметы (None, если показателя нет)."""
+    ind = resolve_generalized_indicator(db, inp)
+    if ind is None:
+        return None
+    area = inp.total_area or 0.0
+    value = round(area * ind.value)
+    deviation = round((resource_grand - value) / value * 100, 1) if value else 0.0
+    return CostAnchor(
+        value=value, indicator_per_unit=ind.value, unit=ind.unit, area=area,
+        source_code=ind.source_code, source_url=ind.source_url, note=ind.note,
+        provisional=ind.needs_review, resource_grand=round(resource_grand),
+        deviation_pct=deviation,
+    )

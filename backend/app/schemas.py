@@ -162,6 +162,21 @@ class EstimateTotals(BaseModel):
     grand_total: float = 0.0
 
 
+class CostAnchor(BaseModel):
+    """Укрупнённый ориентир стоимости РК (НДЦС/УСН) для сверки с ресурсной сметой."""
+
+    value: float                # ₸, укрупнённая оценка = площадь × показатель
+    indicator_per_unit: float   # ₸ за единицу (обычно м²)
+    unit: str = "м²"
+    area: float = 0.0
+    source_code: str = ""
+    source_url: str = ""
+    note: str = ""
+    provisional: bool = True     # значение предварительное (нужен официальный сборник)
+    resource_grand: float = 0.0  # grand_total ресурсной сметы (для сравнения)
+    deviation_pct: float = 0.0   # отклонение ресурсной от укрупнённой, %
+
+
 class EstimateResult(BaseModel):
     project_name: str
     city: str
@@ -173,6 +188,7 @@ class EstimateResult(BaseModel):
     lines: list[EstimateLine] = Field(default_factory=list)
     section_totals: dict[str, float] = Field(default_factory=dict)
     totals: EstimateTotals = Field(default_factory=EstimateTotals)
+    cost_anchor: Optional["CostAnchor"] = None
     contractor_questions: list[str] = Field(default_factory=list)
     clarifications: list[str] = Field(default_factory=list)
     generated_at: str = ""

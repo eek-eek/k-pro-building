@@ -26,3 +26,31 @@ def test_generalized_values_are_provisional(db):
     assert row.needs_review is True
     assert row.value > 0
     assert row.unit == "м²"
+
+
+def test_resolve_indicator_for_object(db):
+    from app.calc.generalized import resolve_generalized_indicator
+    from app.schemas import BuildingInput
+    ind = resolve_generalized_indicator(db, BuildingInput(object_type="Жилой дом"))
+    assert ind is not None and ind.object_type == "Жилой дом"
+    none = resolve_generalized_indicator(db, BuildingInput(object_type="НесуществующийТип"))
+    assert none is None
+
+
+def test_compute_cost_anchor(db):
+    from app.calc.generalized import compute_cost_anchor
+    from app.schemas import BuildingInput
+    inp = BuildingInput(object_type="Жилой дом", total_area=1000.0)  # 1000 м²
+    anchor = compute_cost_anchor(db, inp, resource_grand=300_000_000.0)
+    assert anchor is not None
+    assert anchor.indicator_per_unit > 0
+    assert anchor.value == round(1000.0 * anchor.indicator_per_unit)  # площадь × показатель
+    assert anchor.provisional is True
+    assert anchor.deviation_pct == round((300_000_000 - anchor.value) / anchor.value * 100, 1)
+
+
+def test_compute_cost_anchor_none_when_no_indicator(db):
+    from app.calc.generalized import compute_cost_anchor
+    from app.schemas import BuildingInput
+    anchor = compute_cost_anchor(db, BuildingInput(object_type="НетТакого"), 1.0)
+    assert anchor is None
