@@ -92,7 +92,7 @@ const SELECTS = {
 };
 const DEFAULT_INPUT = {
   project_name: "Черновая смета объекта", city: "Астана / Казахстан", object_type: "Жилой дом",
-  floors: 10, total_area: 1500, building_length: 10, building_width: 15, floor_height: 3,
+  floors: 10, total_area: 1500, building_length: 10, building_width: 15, floor_height: 3, form: "box",
   structure_type: "Монолитный железобетон", foundation_type: "Плита", finish_level: "Черновая",
   engineering_level: "Базовая", basement: false, parking: false, use_search: false, demo_mode: false,
   overhead_pct: 8, contingency_pct: 5, vat_pct: 12, works: [], assumptions: "",
@@ -107,11 +107,15 @@ function inputsForm(inp) {
     `<input type="number" step="${step || 1}" data-in="${key}" value="${escapeAttr(v[key])}"></div>`;
   const txt = (label, key) => `<div class="field"><label>${label}</label>` +
     `<input type="text" data-in="${key}" value="${escapeAttr(v[key])}"></div>`;
+  const formSel = `<div class="field"><label>Форма здания</label><select data-in="form">` +
+    BUILDING_FORMS.map((f) => `<option value="${f.key}" ${f.key === (v.form || "box") ? "selected" : ""}>${escapeHtml(f.label)}</option>`).join("") +
+    `</select></div>`;
   return `
     <div class="grid">
       ${txt("Название проекта", "project_name")}
       ${txt("Город / регион РК", "city")}
       ${sel("Тип объекта", "object_type")}
+      ${formSel}
       ${num("Этажность", "floors")}
       ${num("Общая площадь, м²", "total_area")}
       ${num("Габарит длина, м", "building_length", "0.1")}
@@ -317,7 +321,9 @@ async function viewDetail(id) {
               </div>
             </div>
           </details>
-          ${calculated ? `<div class="card"><h3>Макет здания</h3><div id="smetaMassing" class="massing"></div></div>` : ""}
+          ${calculated ? `<div class="card"><h3>Макет здания</h3>
+            <div class="hint" style="margin-bottom:8px">Меняется при правке исходных данных (форма, габарит, этажность). Нажмите «Изменить и пересчитать», чтобы применить к смете.</div>
+            <div id="smetaMassing" class="massing"></div></div>` : ""}
           <div id="result"></div>
         </div>
         <div class="right" id="chatPanel"></div>
@@ -336,11 +342,23 @@ async function viewDetail(id) {
     renderResult(cv.result);
     buildVersionSelector(id);
     document.getElementById("exportBtn").addEventListener("click", () => exportDocx(cv.result));
-    // 3D-макет здания по входным данным сметы
-    ensureThree().then(() => renderMassing(document.getElementById("smetaMassing"), {
-      length: inp.building_length, width: inp.building_width,
-      floors: inp.floors, floor_height: inp.floor_height, form: inp.form || "box",
-    }));
+    // редактируемый 3D-макет: обновляется при правке габарита/этажности/формы в исходных данных
+    const drawSmetaMassing = async () => {
+      await ensureThree();
+      const get = (k) => Number((document.querySelector(`#inputs [data-in="${k}"]`) || {}).value || 0);
+      const formEl = document.querySelector(`#inputs [data-in="form"]`);
+      renderMassing(document.getElementById("smetaMassing"), {
+        length: get("building_length"), width: get("building_width"),
+        floors: get("floors"), floor_height: get("floor_height") || 3,
+        form: formEl ? formEl.value : (inp.form || "box"),
+      });
+    };
+    document.querySelectorAll('#inputs [data-in="building_length"], #inputs [data-in="building_width"], ' +
+      '#inputs [data-in="floors"], #inputs [data-in="floor_height"], #inputs [data-in="form"]').forEach((el) => {
+      el.addEventListener("input", drawSmetaMassing);
+      el.addEventListener("change", drawSmetaMassing);
+    });
+    drawSmetaMassing();
   }
   renderChat(id, calculated);
 }
@@ -468,8 +486,10 @@ async function verifyNorms() {
   if (btn) { btn.disabled = true; btn.textContent = "Проверяю…"; }
   try {
     const r = await Api.verifyNorms(DETAIL.id);
-    toast(`Ссылок доступно ${r.links_ok}/${r.checked}` +
-      (r.llm ? `, подтверждено ИИ: ${r.confirmed}` : `, ИИ-подтверждение недоступно (нужен провайдер с ключом)`));
+    const llmMsg = r.llm_available
+      ? `, ИИ подтвердил: ${r.confirmed}`
+      : `, ИИ-подтверждение недоступно (нужен провайдер с ключом)`;
+    toast(`Ссылок доступно ${r.links_ok}/${r.checked}${llmMsg}`);
     render();
   } catch (e) {
     toast(e.detail || "Ошибка проверки норм", true);

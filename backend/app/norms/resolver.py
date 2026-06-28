@@ -174,18 +174,23 @@ def _persist_llm_rules(
 
 
 def resolve_norm_profile(
-    db: Session, inp: BuildingInput, progress: ProgressFn | None = None
+    db: Session, inp: BuildingInput, progress: ProgressFn | None = None,
+    force: bool = False,
 ) -> NormProfile:
-    """Главный вход: вернуть собранный нормативный профиль объекта."""
+    """Главный вход: вернуть собранный нормативный профиль объекта.
+
+    force=True пропускает кэш и заново обращается к LLM (нужно для «Проверить нормы»:
+    подпись не зависит от demo_mode/ключа, иначе вернётся старый неподтверждённый профиль)."""
     progress = progress or _noop
     signature = inp.signature()
 
-    # 1. Кэш
-    progress("norms_cache", "Поиск нормативного профиля в БД")
-    cached = _cache_get(db, signature)
-    if cached is not None:
-        progress("norms_cache", "Профиль найден в БД (без обращения к LLM)")
-        return cached
+    # 1. Кэш (пропускаем при force — иначе LLM-подтверждение не сработает)
+    if not force:
+        progress("norms_cache", "Поиск нормативного профиля в БД")
+        cached = _cache_get(db, signature)
+        if cached is not None:
+            progress("norms_cache", "Профиль найден в БД (без обращения к LLM)")
+            return cached
 
     # 2. База: дефолты (всегда полный набор)
     params: dict[str, NormParam] = resolve_defaults(inp)

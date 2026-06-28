@@ -20,6 +20,7 @@ from ..concept import propose_concept
 from ..database import get_db
 from ..geo import bbox_dims_m, polygon_area_m2
 from ..jobs import job_manager
+from ..llm import get_provider
 from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
@@ -301,19 +302,22 @@ def verify_norms(estimate_id: int, db: Session = Depends(get_db)) -> dict:
         inp = BuildingInput(**cv.input)
         inp.use_search = True
         inp.demo_mode = False  # пытаемся подтвердить через LLM; без ключа — тихо деградирует
-        sources = resolve_norm_profile(db, inp).sources
+        # force=True: мимо кэша, иначе вернётся старый профиль без LLM-подтверждения
+        sources = resolve_norm_profile(db, inp, force=True).sources
     except Exception:
         sources = [NormSource(**s) for s in cv.result.get("sources", [])]
     for s in sources:
         s.link_ok = _check_link(s.url) if s.url else None
     cv.result = {**cv.result, "sources": [to_jsonable(s) for s in sources]}
     db.commit()
+    confirmed = sum(1 for s in sources if s.confirmed)
     return {
         "sources": [to_jsonable(s) for s in sources],
         "checked": len(sources),
-        "confirmed": sum(1 for s in sources if s.confirmed),
+        "confirmed": confirmed,
         "links_ok": sum(1 for s in sources if s.link_ok is True),
-        "llm": any(s.confirmed for s in sources),
+        "llm": confirmed > 0,
+        "llm_available": get_provider().available,  # есть ли ключ/провайдер
     }
 
 
