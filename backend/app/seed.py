@@ -1,6 +1,7 @@
 """Инициализация БД: таблицы, реестр норм, справочник цен."""
 from __future__ import annotations
 
+from .calc.generalized import seed_generalized_indicators
 from .calc.pricing import seed_prices
 from .calc.resource_catalog import seed_work_resources
 from .calc.units import seed_units
@@ -28,6 +29,7 @@ def run_seed() -> None:
         seed_prices(db)
         seed_units(db)
         seed_work_resources(db)
+        seed_generalized_indicators(db)
         seed_prompts(db)
 
 

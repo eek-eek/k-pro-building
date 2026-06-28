@@ -273,3 +273,28 @@ class WorkResource(Base):
     region: Mapped[str] = mapped_column(String(64), default="KZ")
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class GeneralizedIndicator(Base):
+    """Укрупнённый показатель стоимости строительства РК (НДЦС/УСН РК), ₸ за единицу.
+
+    Ориентир/сверка к ресурсной смете. Значения из официальных сборников РК;
+    до подтверждения помечаются needs_review (предварительные)."""
+
+    __tablename__ = "generalized_indicators"
+    __table_args__ = (
+        UniqueConstraint("object_type", "region", "price_level",
+                         name="uq_generalized_indicator"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    object_type: Mapped[str] = mapped_column(String(64), index=True)
+    region: Mapped[str] = mapped_column(String(64), default="KZ")
+    value: Mapped[float] = mapped_column(Float)  # ₸ за единицу (обычно м² общей площади)
+    unit: Mapped[str] = mapped_column(String(16), default="м²")
+    price_level: Mapped[str] = mapped_column(String(48), default="")
+    source_code: Mapped[str] = mapped_column(String(64), default="")  # напр. НДЦС РК 8.02-01
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
