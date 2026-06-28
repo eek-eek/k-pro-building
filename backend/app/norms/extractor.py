@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import TYPE_CHECKING
 
 from ..llm import get_provider
@@ -91,6 +92,14 @@ def extract_params(
         system, user, use_search=inp.use_search
     )
 
+    params = _parse_params(data)
+    sources = data.get("sources", []) or []
+    return params, sources, web_links
+
+
+def _parse_params(data: dict) -> dict[str, NormParam]:
+    """Разобрать data['params'] в нормы. Отбрасывает неизвестные категории и
+    невалидные значения (нечисловые / не конечные / отрицательные)."""
     params: dict[str, NormParam] = {}
     for raw in data.get("params", []) or []:
         cat = raw.get("category")
@@ -99,6 +108,8 @@ def extract_params(
         try:
             value = float(raw.get("value"))
         except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value) or value < 0:
             continue
         unit, _ = CATEGORY_META[cat]
         params[cat] = NormParam(
@@ -111,6 +122,4 @@ def extract_params(
             note=(raw.get("note") or "")[:500],
             needs_review=bool(raw.get("needs_review", False)),
         )
-
-    sources = data.get("sources", []) or []
-    return params, sources, web_links
+    return params

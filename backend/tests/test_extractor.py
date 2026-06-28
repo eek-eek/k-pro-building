@@ -64,3 +64,26 @@ def test_extract_params_runs_with_documents(db, monkeypatch):
     assert web_links and web_links[0]["url"] == "https://example.kz"
     # промпт собран из документов реестра
     assert docs[0].code in fake.last_user
+
+
+def test_parse_params_valid():
+    data = {"params": [
+        {"category": "rebar_kg_per_m3", "value": 95, "unit": "кг/м³", "confidence": 0.7},
+    ]}
+    params = extractor._parse_params(data)
+    assert "rebar_kg_per_m3" in params
+    assert params["rebar_kg_per_m3"].value == 95
+    assert params["rebar_kg_per_m3"].source == "llm"
+
+
+def test_parse_params_skips_unknown_and_bad_values():
+    data = {"params": [
+        {"category": "НЕТ_ТАКОЙ", "value": 1},
+        {"category": "rebar_kg_per_m3", "value": -5},            # отрицательное → skip
+        {"category": "frame_concrete_per_area", "value": "abc"},  # не число → skip
+    ]}
+    assert extractor._parse_params(data) == {}
+
+
+def test_parse_params_empty():
+    assert extractor._parse_params({}) == {}
