@@ -10,11 +10,14 @@ from __future__ import annotations
 
 # key → label, footprint_factor, facade_factor
 FORMS: dict[str, dict] = {
-    "box":     {"label": "Брусок",             "footprint": 1.00, "facade": 1.00},
-    "tower":   {"label": "Башня",              "footprint": 0.70, "facade": 1.15},
-    "court":   {"label": "L / П-двор",         "footprint": 0.72, "facade": 1.30},
-    "stepped": {"label": "Ступенчатое / крыша", "footprint": 0.90, "facade": 1.10},
-    "dome":    {"label": "Купол (hi-fi)",       "footprint": 0.85, "facade": 0.85},
+    "box":      {"label": "Брусок",              "footprint": 1.00, "facade": 1.00},
+    "tower":    {"label": "Башня",               "footprint": 0.70, "facade": 1.15},
+    "court":    {"label": "L / П-двор",          "footprint": 0.72, "facade": 1.30},
+    "stepped":  {"label": "Ступенчатое",         "footprint": 0.90, "facade": 1.10},
+    "dome":     {"label": "Купол (hi-fi)",       "footprint": 0.85, "facade": 0.85},
+    "gable":    {"label": "Дом со скатной крышей", "footprint": 1.00, "facade": 1.05},
+    "podium":   {"label": "Стилобат + башня",    "footprint": 0.85, "facade": 1.18},
+    "cylinder": {"label": "Цилиндр",             "footprint": 0.80, "facade": 0.80},
 }
 DEFAULT_FORM = "box"
 

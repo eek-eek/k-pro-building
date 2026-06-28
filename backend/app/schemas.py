@@ -13,10 +13,10 @@ class BuildingInput(BaseModel):
     project_name: str = "Черновая смета объекта"
     city: str = "Астана / Казахстан"
     object_type: str = "Жилой дом"
-    floors: int = 5
-    total_area: float = 2500.0  # м²
-    building_length: float = 50.0  # м
-    building_width: float = 20.0  # м
+    floors: int = 10
+    total_area: float = 1500.0  # м² = длина × ширина × этажность (10×15×10)
+    building_length: float = 10.0  # м
+    building_width: float = 15.0  # м
     floor_height: float = 3.0  # м
     form: str = "box"  # форма здания: box|tower|court|stepped|dome (влияет на застройку/фасад)
     structure_type: str = "Монолитный железобетон"

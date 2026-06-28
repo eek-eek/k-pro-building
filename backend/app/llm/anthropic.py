@@ -27,10 +27,12 @@ class AnthropicProvider(LLMProvider):
         if not self.available:
             raise LLMUnavailable("ANTHROPIC_API_KEY не задан")
 
+        # ВАЖНО: `temperature` НЕ передаём — новые модели Anthropic (Opus 4.x и
+        # новее) его отвергают: "`temperature` is deprecated for this model".
+        # Параметр оставлен в сигнатуре ради общего контракта провайдеров.
         body = {
             "model": self.model,
             "max_tokens": 4096,
-            "temperature": temperature,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
