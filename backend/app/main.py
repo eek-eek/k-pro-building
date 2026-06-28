@@ -25,6 +25,16 @@ app.add_middleware(
 app.include_router(router)
 
 
+@app.middleware("http")
+async def _no_cache_static(request, call_next):
+    """Статика (SPA) — без кэширования: браузер всегда берёт свежие app.js/styles.css.
+    Иначе после деплоя пользователь видит старый фронт («дефолты не применились»)."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 @app.on_event("startup")
 def _startup() -> None:
     run_seed()

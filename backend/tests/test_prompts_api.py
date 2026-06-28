@@ -1,7 +1,11 @@
+import base64
+
 from fastapi.testclient import TestClient
 from app.main import app
 
-client = TestClient(app)
+# Промпты за авторизацией — клиент шлёт admin/admin12345.
+_AUTH = "Basic " + base64.b64encode(b"admin:admin12345").decode()
+client = TestClient(app, headers={"Authorization": _AUTH})
 
 
 def test_list_prompts():

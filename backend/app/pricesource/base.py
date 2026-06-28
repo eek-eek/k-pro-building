@@ -15,4 +15,5 @@ class PriceQuote:
 
 class PriceSource(Protocol):
     name: str
-    def quote_materials(self, codes: list[str]) -> dict[str, PriceQuote]: ...
+    # city — город сметы; источник может ограничить выборку этим городом.
+    def quote_materials(self, codes: list[str], city: str | None = None) -> dict[str, PriceQuote]: ...

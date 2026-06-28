@@ -1,7 +1,11 @@
+import base64
+
 from fastapi.testclient import TestClient
 from app.main import app
 
-client = TestClient(app)
+# Настройки за авторизацией — клиент шлёт admin/admin12345.
+_AUTH = "Basic " + base64.b64encode(b"admin:admin12345").decode()
+client = TestClient(app, headers={"Authorization": _AUTH})
 
 
 def test_get_settings_shape_and_catalog():
@@ -33,3 +37,10 @@ def test_put_settings_keeps_key_when_masked_value_resent():
 def test_test_connection_demo_returns_not_ok():
     r = client.post("/api/settings/test", json={"provider": "demo"}).json()
     assert r["ok"] is False
+
+
+def test_settings_and_prompts_require_auth():
+    anon = TestClient(app)   # без заголовка авторизации
+    assert anon.get("/api/settings").status_code == 401
+    assert anon.put("/api/settings", json={"provider": "demo"}).status_code == 401
+    assert anon.get("/api/prompts").status_code == 401
