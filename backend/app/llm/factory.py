@@ -9,15 +9,20 @@ from .gemini import GeminiProvider
 from .openai import OpenAIProvider
 
 
-def build_provider(eff) -> LLMProvider:
-    provider = (eff.llm_provider or "demo").lower()
-    if provider == "gemini":
+def build_named_provider(eff, name: str) -> LLMProvider:
+    """Построить провайдера по ЯВНОМУ имени из per-provider ключей/моделей eff."""
+    name = (name or "demo").lower()
+    if name == "gemini":
         return GeminiProvider(eff.gemini_api_key, eff.gemini_model, eff.llm_use_search)
-    if provider == "anthropic":
+    if name == "anthropic":
         return AnthropicProvider(eff.anthropic_api_key, eff.anthropic_model)
-    if provider == "openai":
+    if name == "openai":
         return OpenAIProvider(eff.openai_api_key, eff.openai_model)
     return DemoProvider()
+
+
+def build_provider(eff) -> LLMProvider:
+    return build_named_provider(eff, eff.llm_provider)
 
 
 def get_provider() -> LLMProvider:
