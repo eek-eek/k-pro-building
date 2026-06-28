@@ -182,6 +182,18 @@ def build_estimate(
         )
     if profile.from_cache:
         warnings.append("Нормативный профиль взят из кэша БД (без обращения к LLM).")
+    if profile.cross_check and profile.cross_check.ran:
+        cc = profile.cross_check
+        msg = (f"Профиль прошёл кросс-проверку ({cc.verifier}): "
+               f"подтверждено {cc.agreed}, расхождений {cc.disputed}")
+        if cc.missing:
+            msg += f", без ответа {cc.missing}"
+        if cc.extra_keys:
+            msg += f"; вторая модель дополнительно предложила: {', '.join(cc.extra_keys)}"
+        warnings.append(msg + ".")
+    elif (profile.cross_check and profile.cross_check.enabled
+          and not profile.cross_check.ran and profile.cross_check.reason):
+        warnings.append(f"Кросс-проверка включена, но не выполнена: {profile.cross_check.reason}.")
 
     clarifications = [
         "Полный комплект проектной документации (АР, КР, ОВиК, ВК, ЭОМ, СС).",

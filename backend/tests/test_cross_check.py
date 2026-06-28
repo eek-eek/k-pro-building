@@ -124,3 +124,15 @@ def test_resolver_attaches_cross_check(db, monkeypatch):
     prof = resolve_norm_profile(db, inp, force=True)  # мимо кэша
     assert prof.cross_check is not None and prof.cross_check.ran is True
     assert prof.cross_check.agreed >= 1
+
+
+def test_estimate_warning_from_cross_check(db):
+    from app.calc import build_estimate
+    from app.schemas import CrossCheck
+    inp = BuildingInput(demo_mode=True, use_search=False, object_type="Жилой дом")
+    from app.norms import resolve_norm_profile
+    prof = resolve_norm_profile(db, inp)
+    prof.cross_check = CrossCheck(enabled=True, ran=True, verifier="openai",
+                                  agreed=3, disputed=1)
+    r = build_estimate(db, inp, prof)
+    assert any("кросс-проверку (openai)" in w.lower() for w in r.warnings)
