@@ -84,6 +84,20 @@ class NormSource(BaseModel):
     link_ok: Optional[bool] = None  # доступность ссылки: True/False/None
 
 
+class CrossCheck(BaseModel):
+    """Итог кросс-проверки норм вторым ИИ (ансамбль)."""
+
+    enabled: bool = False
+    ran: bool = False
+    verifier: str = ""
+    agreed: int = 0
+    disputed: int = 0
+    missing: int = 0
+    extra: int = 0
+    extra_keys: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
 class NormProfile(BaseModel):
     """Собранный набор норм под конкретный объект."""
 
@@ -92,6 +106,7 @@ class NormProfile(BaseModel):
     params: dict[str, NormParam] = Field(default_factory=dict)
     sources: list[NormSource] = Field(default_factory=list)
     from_cache: bool = False
+    cross_check: Optional["CrossCheck"] = None
 
     def value(self, category: str, fallback: float) -> float:
         p = self.params.get(category)

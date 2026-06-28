@@ -123,3 +123,87 @@ def _parse_params(data: dict) -> dict[str, NormParam]:
             needs_review=bool(raw.get("needs_review", False)),
         )
     return params
+
+
+# ── Ансамбль: независимая кросс-проверка норм вторым провайдером ──
+REL_TOL = 0.15      # порог относительного расхождения значений
+ABS_FLOOR = 1e-3    # пол знаменателя (корректное сравнение при значениях ~0)
+CONF_BONUS = 0.15   # прибавка к уверенности при согласии
+NOTE_MAX = 500      # лимит длины ноты
+
+
+def _cap_note(s: str) -> str:
+    return s[:NOTE_MAX]
+
+
+def _pct(rel: float) -> str:
+    return f"{min(rel, 9.99):.0%}"
+
+
+def cross_check_params(db, inp: BuildingInput, documents, primary_params):
+    """Независимо извлечь нормы проверяющим провайдером и сверить с primary_params.
+
+    Аннотирует primary_params (confidence/needs_review/note) на месте и возвращает
+    (primary_params, CrossCheck). Мягкая деградация на всех путях отказа.
+    """
+    from ..schemas import CrossCheck
+    from ..settings_service import get_effective_settings
+    from ..llm.factory import build_named_provider
+    from ..prompts import get_prompt
+
+    eff = get_effective_settings(db)
+    if not primary_params:
+        return primary_params, CrossCheck(enabled=eff.cross_check_enabled, ran=False,
+                                          reason="основное LLM-извлечение пусто")
+    if not eff.cross_check_enabled:
+        return primary_params, CrossCheck(enabled=False)
+    if eff.cross_check_provider == eff.llm_provider:
+        return primary_params, CrossCheck(enabled=True, ran=False,
+                                          reason="проверяющий совпадает с основным")
+    verifier = build_named_provider(eff, eff.cross_check_provider)
+    if not verifier.available:
+        return primary_params, CrossCheck(enabled=True, ran=False,
+                                          reason="проверяющий недоступен (нет ключа)")
+
+    user = build_user_prompt(inp, documents)
+    system = get_prompt(db, "norm_extraction") or SYSTEM_PROMPT
+    try:
+        data, _ = verifier.extract_json(system, user, use_search=eff.llm_use_search)
+    except LLMUnavailable:
+        return primary_params, CrossCheck(enabled=True, ran=False,
+                                          reason="ошибка проверяющего")
+    verifier_params = _parse_params(data)
+    if not verifier_params:
+        return primary_params, CrossCheck(enabled=True, ran=False,
+                                          reason="проверяющий вернул нечитаемый ответ")
+
+    agreed = disputed = missing = 0
+    extra_keys = [c for c in verifier_params if c not in primary_params]
+    for cat, p in primary_params.items():
+        v = verifier_params.get(cat)
+        if v is None:
+            missing += 1
+            p.note = _cap_note(p.note + " · вторая модель не дала значение")
+            continue
+        if p.unit and v.unit and p.unit != v.unit:
+            p.needs_review = True
+            p.note = _cap_note(p.note + f" · ⚠ единицы расходятся: {p.unit} vs {v.unit}")
+            disputed += 1
+            continue
+        denom = max(abs(p.value), abs(v.value), ABS_FLOOR)
+        rel = abs(p.value - v.value) / denom
+        if rel <= REL_TOL:
+            p.confidence = min(1.0, p.confidence + CONF_BONUS)
+            p.note = _cap_note(p.note + f" · ✓ подтверждено {verifier.name}")
+            agreed += 1
+        else:
+            p.needs_review = True
+            p.note = _cap_note(
+                p.note + f" · ⚠ расхождение с {verifier.name}: {p.value} vs {v.value} ({_pct(rel)})"
+            )
+            disputed += 1
+    return primary_params, CrossCheck(
+        enabled=True, ran=True, verifier=eff.cross_check_provider,
+        agreed=agreed, disputed=disputed, missing=missing,
+        extra=len(extra_keys), extra_keys=extra_keys[:10],
+    )
