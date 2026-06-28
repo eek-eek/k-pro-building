@@ -14,7 +14,7 @@ from ..schemas import (
 )
 from .geometry import derive
 from .pricing import get_price
-from .resource_catalog import rollup, snapshot_for
+from .resource_catalog import db_snapshot_for, rollup
 from .volumes import compute_volumes
 
 # (номер, название раздела, [ключи объёмов], [подстроки для фильтра по видам работ])
@@ -90,7 +90,7 @@ def build_estimate(
             vol = volumes.get(key)
             if vol is None or vol.quantity <= 0:
                 continue
-            resources = snapshot_for(key)
+            resources = db_snapshot_for(db, key, region)
             if resources:
                 material_price, labor_price, machine_price = rollup(resources)
             else:

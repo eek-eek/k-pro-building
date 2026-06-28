@@ -202,3 +202,33 @@ def seed_work_resources(db: Session, region: str = "KZ") -> None:
                 needs_review=not unit_ok_for_kind(s.unit, s.kind),
             ))
     db.commit()
+
+
+def db_snapshot_for(
+    db: Session, work_key: str, region: str = "KZ",
+    price_level: str = SEED_PRICE_LEVEL,
+) -> list[ResourceLine]:
+    """Снимок ресурсов работы из БД (резолв region → KZ, фолбэк на COMPOSITIONS).
+
+    Порядок строк — по id (= порядок сида = порядок COMPOSITIONS), чтобы индексы
+    ресурсов в строке сметы были стабильны для ручной правки.
+    """
+    from ..models import WorkResource
+
+    for reg in (region, "KZ"):
+        rows = db.scalars(
+            select(WorkResource)
+            .where(
+                WorkResource.work_key == work_key,
+                WorkResource.region == reg,
+                WorkResource.price_level == price_level,
+            )
+            .order_by(WorkResource.id)
+        ).all()
+        if rows:
+            return [
+                ResourceLine(code=r.code, name=r.name, kind=r.kind, unit=r.unit,
+                             consumption=r.consumption, price=r.price)
+                for r in rows
+            ]
+    return snapshot_for(work_key)
