@@ -76,12 +76,25 @@ def test_test_connection_demo_returns_not_ok():
     assert r["ok"] is False
 
 
-def test_settings_writes_and_prompts_require_auth():
+def test_settings_and_prompts_require_auth():
     anon = TestClient(app)   # без заголовка авторизации
-    # GET настроек открыт (маскированный) — нужен чату/навбару:
-    assert anon.get("/api/settings").status_code == 200
+    # GET настроек теперь закрыт — конфиг/маскированные ключи только админу:
+    assert anon.get("/api/settings").status_code == 401
     # запись настроек и промпты — закрыты:
     assert anon.put("/api/settings", json={"provider": "demo"}).status_code == 401
     assert anon.post("/api/settings/test", json={"provider": "demo"}).status_code == 401
     assert anon.get("/api/prompts").status_code == 401
     assert anon.put("/api/prompts/x", json={"body": "y"}).status_code == 401
+
+
+def test_health_is_public_with_provider_flag():
+    # навбару/чату достаточно публичного /health — без секретов
+    h = TestClient(app).get("/api/health").json()
+    assert h["status"] == "ok" and h["llm_provider"]
+    assert "has_key" in h  # флаг «AI настроен», не секрет
+
+
+def test_wrong_admin_password_rejected():
+    bad = TestClient(app, headers={"Authorization":
+          "Basic " + base64.b64encode(b"admin:wrong").decode()})
+    assert bad.get("/api/settings").status_code == 401

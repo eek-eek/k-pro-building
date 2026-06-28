@@ -75,6 +75,7 @@ const Api = {
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
   listChat: (id) => api("GET", `/estimates/${id}/chat`),
   postChat: (id, message) => api("POST", `/estimates/${id}/chat`, { message }),
+  health: () => api("GET", "/health"),
   getSettings: () => api("GET", "/settings"),
   putSettings: (b) => api("PUT", "/settings", b),
   testConn: (b) => api("POST", "/settings/test", b),
@@ -201,8 +202,8 @@ async function refreshNavProvider() {
   const el = document.getElementById("navProvider");
   if (!el) return;
   try {
-    const s = await Api.getSettings();   // GET открыт (маскированный)
-    el.textContent = "Провайдер: " + s.provider + (s.has_key || s.provider === "demo" ? "" : " (нет ключа)");
+    const s = await Api.health();   // публичный: провайдер + has_key (без секретов)
+    el.textContent = "Провайдер: " + s.llm_provider + (s.has_key || s.llm_provider === "demo" ? "" : " (нет ключа)");
   } catch (e) { el.textContent = ""; }
 }
 
@@ -859,8 +860,8 @@ function bindChatFit() {
 async function renderChat(id, calculated) {
   const panel = document.getElementById("chatPanel");
   let settings = null;
-  try { settings = await Api.getSettings(); } catch (e) { /* ignore */ }
-  const usable = settings && settings.provider !== "demo" && settings.has_key;
+  try { settings = await Api.health(); } catch (e) { /* ignore */ }
+  const usable = settings && settings.llm_provider !== "demo" && settings.has_key;
   const msgs = calculated ? await Api.listChat(id) : [];
   panel.innerHTML = `
     <div class="chat-head">💬 Чат с ИИ</div>

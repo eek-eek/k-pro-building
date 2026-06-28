@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     cross_check_enabled: bool = False
     cross_check_provider: str = "openai"  # проверяющий провайдер (ансамбль)
 
+    # Админ-доступ (Настройки/Промпты). На проде ОБЯЗАТЕЛЬНО задать ADMIN_PASSWORD
+    # в .env — дефолт ниже только для локальной разработки.
+    admin_user: str = "admin"
+    admin_password: str = "admin12345"
+
     # DB
     database_url: str = "sqlite:///./data/ai_smeta.db"
 

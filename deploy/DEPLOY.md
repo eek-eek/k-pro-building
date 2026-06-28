@@ -31,11 +31,15 @@ bash deploy/setup.sh
 `backend/.env`, прогонит тесты и поднимет systemd-сервис `yale-bc` на
 `127.0.0.1:8000`.
 
-Затем впишите ключ ИИ (или оставьте demo-режим):
+Затем впишите ключ ИИ (или оставьте demo-режим) и **обязательно смените пароль админа**:
 ```bash
 nano backend/.env      # LLM_PROVIDER=anthropic + ANTHROPIC_API_KEY=...  (или LLM_PROVIDER=demo)
+                       # ADMIN_PASSWORD=<надёжный пароль>  (дефолт admin12345 публичен!)
 sudo systemctl restart yale-bc
 ```
+> ⚠ Раздел Настройки/Промпты закрыт HTTP Basic (`ADMIN_USER`/`ADMIN_PASSWORD`).
+> Дефолтный пароль лежит в открытом коде — на проде задайте свой в `.env`.
+> Поверх дополнительно стоит basic-auth Caddy (шаг 3).
 
 Проверка локально на сервере:
 ```bash

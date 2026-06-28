@@ -47,7 +47,8 @@ def _utcnow_dt() -> _dt.datetime:
 @router.get("/health")
 def health(db: Session = Depends(get_db)) -> dict:
     eff = get_effective_settings(db)
-    return {"status": "ok", "llm_provider": eff.llm_provider}
+    # has_key — публичный флаг «AI настроен» для навбара/чата (не секрет).
+    return {"status": "ok", "llm_provider": eff.llm_provider, "has_key": bool(eff.active_key())}
 
 
 @router.post("/estimate")
@@ -460,9 +461,10 @@ def post_chat(estimate_id: int, body: ChatPost, db: Session = Depends(get_db)) -
 
 
 @router.get("/settings")
-def get_settings_api(db: Session = Depends(get_db)) -> dict:
-    # GET открыт намеренно: ключ маскирован, а провайдер нужен чату/навбару.
-    # Запись настроек и промпты — под require_admin.
+def get_settings_api(db: Session = Depends(get_db),
+                     _a: None = Depends(require_admin)) -> dict:
+    # Под require_admin: отдаёт конфиг и маскированные ключи только админу.
+    # Навбар/чат берут провайдера и has_key из публичного /health.
     eff = get_effective_settings(db)
     providers = ("gemini", "anthropic", "openai")
     return {
