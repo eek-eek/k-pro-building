@@ -67,6 +67,7 @@ const Api = {
     api("GET", `/objects/${id}/concept?object_type=${encodeURIComponent(object_type)}` +
       (floors ? `&floors=${floors}` : "") + (form ? `&form=${encodeURIComponent(form)}` : "")),
   objectCreateEstimate: (id, input) => api("POST", `/objects/${id}/estimate`, input),
+  generateForm: (description, base) => api("POST", "/building-form/generate", { description, base }),
   checkZone: (id) => api("POST", `/objects/${id}/check-zone`),
   zoningWms: (city) => api("GET", `/zoning/wms?city=${encodeURIComponent(city)}`),
   verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
@@ -331,7 +332,10 @@ async function viewDetail(id) {
             </div>
           </details>
           ${calculated ? `<div class="card"><h3>Макет здания</h3>
-            <div class="hint" style="margin-bottom:8px">Меняется при правке исходных данных (форма, габарит, этажность). Нажмите «Изменить и пересчитать», чтобы применить к смете.</div>
+            ${(cv && cv.input && Array.isArray(cv.input.massing) && cv.input.massing.length)
+              ? `<div class="zone-warn" style="margin-bottom:8px">Активна произвольная форма ИИ (${cv.input.massing.length} бл.). Правка габаритов/формы не применяется, пока форма не сброшена. <button class="btn sm" id="resetFormBtn">Сбросить форму</button></div>`
+              : `<div class="hint" style="margin-bottom:8px">Меняется при правке исходных данных (форма, габарит, этажность). Или сгенерируйте произвольную форму по описанию — ИИ проверит её на нормы РК.</div>`}
+            <div class="row-actions" style="margin-bottom:8px"><button class="btn" id="genFormBtn">✨ Сгенерировать форму (ИИ)</button></div>
             <div id="smetaMassing" class="massing"></div></div>` : ""}
           <div id="result"></div>
         </div>
@@ -354,6 +358,12 @@ async function viewDetail(id) {
     // редактируемый 3D-макет: обновляется при правке габарита/этажности/формы в исходных данных
     const drawSmetaMassing = async () => {
       await ensureThree();
+      // Если у сметы есть произвольная форма (массинг) — рендерим её, а не форму-пресет.
+      if (cv.input && Array.isArray(cv.input.massing) && cv.input.massing.length) {
+        renderMassingBoxes(document.getElementById("smetaMassing"), cv.input.massing,
+          cv.input.floor_height || 3);
+        return;
+      }
       const get = (k) => Number((document.querySelector(`#inputs [data-in="${k}"]`) || {}).value || 0);
       const formEl = document.querySelector(`#inputs [data-in="form"]`);
       renderMassing(document.getElementById("smetaMassing"), {
@@ -362,6 +372,14 @@ async function viewDetail(id) {
         form: formEl ? formEl.value : (inp.form || "box"),
       });
     };
+    document.getElementById("genFormBtn").addEventListener("click",
+      () => openFormGenModal(id, drawSmetaMassing));
+    const resetFormBtn = document.getElementById("resetFormBtn");
+    if (resetFormBtn) resetFormBtn.addEventListener("click", () => {
+      if (!confirm("Сбросить произвольную форму и вернуться к габаритам из исходных данных?")) return;
+      DETAIL.massingReset = true;   // не подмешивать массинг в этот пересчёт
+      runCalc(id);
+    });
     document.querySelectorAll('#inputs [data-in="building_length"], #inputs [data-in="building_width"], ' +
       '#inputs [data-in="floors"], #inputs [data-in="floor_height"], #inputs [data-in="form"]').forEach((el) => {
       el.addEventListener("input", drawSmetaMassing);
@@ -408,6 +426,13 @@ function hideCalcOverlay() {
 
 async function runCalc(id) {
   const input = collectInputs(document.getElementById("inputs"));
+  // Сохранить активную ИИ-форму (массинг) между пересчётами — collectInputs её не
+  // содержит. Кнопка «Сбросить форму» выставляет massingReset → откат к габаритам.
+  const savedMassing = DETAIL && DETAIL.data && DETAIL.data.current_version
+    && DETAIL.data.current_version.input && DETAIL.data.current_version.input.massing;
+  if (!(DETAIL && DETAIL.massingReset) && Array.isArray(savedMassing) && savedMassing.length) {
+    input.massing = savedMassing;
+  }
   const calcBtn = document.getElementById("calcBtn");
   calcBtn.disabled = true;
   const stepsEl = showCalcOverlay();
@@ -444,6 +469,99 @@ function listenJob(jobId, stepsEl, onDone, onEnd) {
   });
   src.addEventListener("end", () => { src.close(); onEnd && onEnd(); });
   src.onerror = () => { src.close(); onEnd && onEnd(); };
+}
+
+// ── ИИ-генерация формы здания (массинг) ──
+function openFormGenModal(id, onClose) {
+  const base = collectInputs(document.getElementById("inputs"));
+  let current = null;  // последняя валидная генерация {boxes, floor_height}
+  const ov = document.createElement("div");
+  ov.className = "form-modal-ov";
+  ov.innerHTML = `
+    <div class="form-modal" role="dialog" aria-modal="true">
+      <div class="fm-head">Форма здания с помощью ИИ
+        <button class="fm-x" id="fmClose" aria-label="Закрыть">×</button></div>
+      <div class="fm-body">
+        <label class="fm-label">Опишите форму здания</label>
+        <textarea id="fmDesc" class="fm-desc" rows="3"
+          placeholder="напр.: Г-образный жилой дом 12 этажей; или стилобат 3 этажа с башней 16 этажей сверху"></textarea>
+        <div class="row-actions">
+          <button class="btn primary" id="fmGen">Сгенерировать</button>
+          <span class="fm-hint">Базовые габариты — из сметы. ИИ проверит форму на нормы РК.</span>
+        </div>
+        <div id="fmMsg" class="fm-msg"></div>
+        <div id="fmPreview" class="massing fm-preview"></div>
+      </div>
+      <div class="fm-foot">
+        <button class="btn" id="fmCancel">Отмена</button>
+        <button class="btn accent" id="fmSave" disabled>Сохранить форму и пересчитать</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  document.body.style.overflow = "hidden";
+
+  const close = () => {
+    disposeMassing();
+    ov.remove();
+    document.body.style.overflow = "";
+    if (onClose) onClose();  // восстановить макет сметы
+  };
+  document.getElementById("fmClose").addEventListener("click", close);
+  document.getElementById("fmCancel").addEventListener("click", close);
+
+  const msgEl = document.getElementById("fmMsg");
+  const saveBtn = document.getElementById("fmSave");
+
+  document.getElementById("fmGen").addEventListener("click", async () => {
+    const desc = document.getElementById("fmDesc").value.trim();
+    if (!desc) { toast("Опишите форму", true); return; }
+    const genBtn = document.getElementById("fmGen");
+    genBtn.disabled = true; genBtn.textContent = "Генерация…";
+    msgEl.className = "fm-msg"; msgEl.textContent = "";
+    current = null; saveBtn.disabled = true;
+    try {
+      const r = await Api.generateForm(desc, base);
+      msgEl.textContent = r.message || "";
+      msgEl.className = "fm-msg " + (r.status === "rejected" ? "err" : r.status === "adjusted" ? "warn" : "ok");
+      if (r.status === "rejected" || !r.boxes || !r.boxes.length) {
+        disposeMassing();
+        document.getElementById("fmPreview").innerHTML = "";
+      } else {
+        await ensureThree();
+        renderMassingBoxes(document.getElementById("fmPreview"), r.boxes, r.floor_height || 3);
+        current = { boxes: r.boxes, floor_height: r.floor_height || 3 };
+        saveBtn.disabled = false;
+      }
+    } catch (e) {
+      msgEl.className = "fm-msg err"; msgEl.textContent = e.detail || "Ошибка генерации";
+    } finally {
+      genBtn.disabled = false; genBtn.textContent = "Сгенерировать";
+    }
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    if (!current) return;
+    ov.remove(); document.body.style.overflow = "";  // оверлей расчёта покажет прогресс
+    await saveGeneratedForm(id, current.boxes, current.floor_height);
+  });
+}
+
+async function saveGeneratedForm(id, boxes, floor_height) {
+  const input = collectInputs(document.getElementById("inputs"));
+  input.massing = boxes;
+  input.floor_height = floor_height || input.floor_height;
+  const stepsEl = showCalcOverlay();
+  stepsEl.innerHTML = `<li class="running"><span class="mark">…</span><span>Пересчёт сметы по новой форме…</span></li>`;
+  try {
+    const { job_id } = await Api.calc(id, input);
+    listenJob(job_id, stepsEl,
+      () => { hideCalcOverlay(); toast("Форма сохранена, смета пересчитана"); render(); },
+      () => { hideCalcOverlay(); render(); });   // ошибка job → перерисовать макет
+  } catch (e) {
+    hideCalcOverlay();
+    toast(e.detail || "Ошибка пересчёта", true);
+    render();   // восстановить 3D-макет (превью забрало canvas из #smetaMassing)
+  }
 }
 
 // ── estimate render (editable) ──
@@ -1372,14 +1490,37 @@ function _cylinder(T, g, mats, r, h, n) {
 }
 
 // строим группу здания нужной формы; возвращаем {group, height}
-function buildBuilding(T, form, L, D, n, fh) {
-  const g = new T.Group();
-  const mats = {
+function _massMats(T) {
+  return {
     wall: new T.MeshStandardMaterial({ color: 0x9DB4D4, roughness: 0.62, metalness: 0.05 }),
     edge: new T.LineBasicMaterial({ color: 0x2C5BA8 }),
     floor: new T.LineBasicMaterial({ color: 0x2C5BA8, transparent: true, opacity: 0.28 }),
     roof: new T.MeshStandardMaterial({ color: 0x6E8CB8, roughness: 0.6, metalness: 0.05 }),
   };
+}
+
+// Произвольный массинг: набор блоков {x,y,w,d,floors,base}, центрированный в сцене.
+function buildBoxes(T, boxes, fh) {
+  const g = new T.Group();
+  if (!boxes || !boxes.length) return { group: g, height: Math.max(1, fh || 3) };
+  const mats = _massMats(T);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, top = 0;
+  boxes.forEach((b) => {
+    minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x + b.w);
+    minY = Math.min(minY, b.y); maxY = Math.max(maxY, b.y + b.d);
+    top = Math.max(top, (b.base + b.floors) * fh);
+  });
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  boxes.forEach((b) => _massBlock(T, g, mats, {
+    w: b.w, d: b.d, h: b.floors * fh, y0: b.base * fh,
+    x0: (b.x + b.w / 2) - cx, z0: (b.y + b.d / 2) - cy, floors: b.floors, fh,
+  }));
+  return { group: g, height: top, span: Math.max(maxX - minX, maxY - minY) };
+}
+
+function buildBuilding(T, form, L, D, n, fh) {
+  const g = new T.Group();
+  const mats = _massMats(T);
   const Ht = n * fh;
   if (form === "tower") {
     _massBlock(T, g, mats, { w: L * 0.78, d: D * 0.78, h: Ht, y0: 0, floors: n, fh });
@@ -1431,12 +1572,27 @@ function buildBuilding(T, form, L, D, n, fh) {
 
 function renderMassing(container, dims) {
   if (!container || !window.THREE) return;
-  disposeMassing();
   const T = window.THREE;
-  const W = container.clientWidth || 360, H = container.clientHeight || 240;
   const L = Math.max(1, dims.length || 1), D = Math.max(1, dims.width || 1);
   const n = Math.max(1, Math.round(dims.floors || 1));
   const fh = dims.floor_height || 3;
+  const built = buildBuilding(T, dims.form || "box", L, D, n, fh);
+  _mountMassing(container, built, Math.max(L, D, built.height));
+}
+
+// Рендер произвольного массинга (JSON-рецепт из блоков) — та же геометрия, что и в смете.
+function renderMassingBoxes(container, boxes, floor_height) {
+  if (!container || !window.THREE) return;
+  const T = window.THREE;
+  const built = buildBoxes(T, boxes, floor_height || 3);
+  _mountMassing(container, built, Math.max(built.span || 1, built.height || 1));
+}
+
+function _mountMassing(container, built, maxDim) {
+  disposeMassing();
+  const T = window.THREE;
+  const W = container.clientWidth || 360, H = container.clientHeight || 240;
+  maxDim = Math.max(maxDim || 1, 1);
 
   const scene = new T.Scene();
   scene.background = new T.Color(0xEFEEEA);
@@ -1449,10 +1605,8 @@ function renderMassing(container, dims) {
   container.innerHTML = "";
   container.appendChild(renderer.domElement);
 
-  const built = buildBuilding(T, dims.form || "box", L, D, n, fh);
   scene.add(built.group);
   const height = built.height;
-  const maxDim = Math.max(L, D, height);
 
   // площадка-участок (принимает тень)
   const pad = new T.Mesh(new T.PlaneGeometry(maxDim * 2.4, maxDim * 2.4),

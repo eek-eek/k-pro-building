@@ -14,6 +14,7 @@ from ..calc import (
     build_estimate, recompute_estimate,
     applicable_recommendations, build_recommendation_line,
 )
+from ..calc.form_ai import generate_form
 from ..auth import require_admin
 from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
 from ..concept import propose_concept
@@ -75,6 +76,14 @@ def create_estimate_sync(inp: BuildingInput, db: Session = Depends(get_db)) -> d
         "version_number": version.version_number,
         "result": to_jsonable(result),
     }
+
+
+@router.post("/building-form/generate")
+def building_form_generate(body: dict = Body(default={}), db: Session = Depends(get_db)) -> dict:
+    """ИИ-генерация формы здания (массинг) по описанию + нормоконтроль РК.
+    Возвращает {status, message, floor_height, boxes}; ничего не сохраняет."""
+    form = generate_form(db, str(body.get("description") or ""), body.get("base") or {})
+    return to_jsonable(form)
 
 
 @router.get("/estimate/{job_id}", response_model=JobStatus)

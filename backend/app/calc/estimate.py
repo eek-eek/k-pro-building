@@ -97,9 +97,14 @@ def build_estimate(
     db: Session, inp: BuildingInput, profile: NormProfile
 ) -> EstimateResult:
     geo = derive(inp)
-    area_warning = _clamp_total_area(inp, geo)
-    if area_warning:
-        geo = derive(inp)  # пересчёт геометрии под скорректированную площадь
+    if inp.massing:
+        # Произвольная форма: площадь — из массинга (истина), контроль не нужен.
+        inp.total_area = float(round(geo.total_area))
+        area_warning = None
+    else:
+        area_warning = _clamp_total_area(inp, geo)
+        if area_warning:
+            geo = derive(inp)  # пересчёт геометрии под скорректированную площадь
     volumes = compute_volumes(inp, profile, geo)
     region = inp.city.split("/")[0].strip() or "KZ"
 

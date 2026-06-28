@@ -8,6 +8,29 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class MassingBox(BaseModel):
+    """Прямоугольный объём массинга. План: угол (x,y), габариты (w,d) в метрах;
+    floors — этажей в блоке; base — этажей-смещение снизу (башня на стилобате)."""
+
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 1.0  # ширина (вдоль X), м
+    d: float = 1.0  # глубина (вдоль Y), м
+    floors: int = 1
+    base: int = 0
+
+
+class BuildingForm(BaseModel):
+    """Результат ИИ-генерации формы здания с нормоконтролем.
+    status: ok — реализуема как запрошено; adjusted — изменена под нормы/физику РК;
+    rejected — принципиально нереализуема (boxes пуст)."""
+
+    status: str = "ok"          # ok | adjusted | rejected
+    message: str = ""           # объяснение пользователю (нарушение/правка/отказ)
+    floor_height: float = 3.0
+    boxes: list[MassingBox] = Field(default_factory=list)
+
+
 # ─────────────────────────── Вход от заказчика ───────────────────────────
 class BuildingInput(BaseModel):
     project_name: str = "Черновая смета объекта"
@@ -34,6 +57,9 @@ class BuildingInput(BaseModel):
 
     works: list[str] = Field(default_factory=list)
     assumptions: str = ""
+    # Произвольная форма (набор блоков). Если задана — геометрия берётся из неё,
+    # а не из длина×ширина×фактор формы. None → прежнее поведение.
+    massing: Optional[list[MassingBox]] = None
 
     @field_validator("floors", mode="before")
     @classmethod
@@ -42,6 +68,16 @@ class BuildingInput(BaseModel):
         Нечисловое отдаём дальше — стандартная валидация его отвергнет."""
         try:
             return max(1, round(float(v)))
+        except (TypeError, ValueError):
+            return v
+
+    @field_validator("floor_height", mode="before")
+    @classmethod
+    def _floor_height_positive(cls, v):
+        """Высота этажа должна быть положительной (иначе отрицательные объём/фасад)."""
+        try:
+            f = float(v)
+            return f if f > 0 else 3.0
         except (TypeError, ValueError):
             return v
 

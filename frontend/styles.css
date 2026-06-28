@@ -368,3 +368,35 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 .home-steps span { font-weight: 700; color: var(--text); margin-right: 8px; }
 .home-steps b { color: var(--accent); font-family: var(--mono); }
 @media (max-width: 720px) { .home-cards { grid-template-columns: 1fr; } }
+
+/* ── ИИ-генерация формы здания (модалка) ── */
+.form-modal-ov {
+  position: fixed; inset: 0; z-index: 110;
+  background: rgba(28, 32, 36, .42);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.form-modal {
+  background: var(--surface); border-radius: 12px; width: min(560px, 100%);
+  max-height: 90vh; overflow: auto; box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+  display: flex; flex-direction: column;
+}
+.fm-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 16px;
+}
+.fm-x { border: none; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; color: #999; }
+.fm-body { padding: 16px 20px; }
+.fm-label { display: block; font-weight: 600; margin-bottom: 6px; }
+.fm-desc { width: 100%; resize: vertical; }
+.fm-hint { font-size: 12px; color: #888; }
+.fm-msg { margin-top: 12px; border-radius: 8px; font-size: 13px; }
+.fm-msg:not(:empty) { padding: 10px 12px; }
+.fm-msg.ok { background: var(--ok-bg); color: var(--ok); }
+.fm-msg.warn { background: var(--warn-bg); color: var(--warn); }
+.fm-msg.err { background: var(--danger-bg); color: var(--danger); }
+.fm-preview { margin-top: 12px; height: 260px; }
+.fm-foot {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 14px 20px; border-top: 1px solid var(--line);
+}

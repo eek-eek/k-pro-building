@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from ..schemas import BuildingInput
 from .forms import facade_factor, footprint_factor
+from .massing import massing_metrics
 
 
 @dataclass
@@ -19,6 +20,17 @@ class Geometry:
 
 
 def derive(inp: BuildingInput) -> Geometry:
+    # Произвольная форма: геометрия берётся напрямую из блоков массинга.
+    if inp.massing:
+        m = massing_metrics(inp.massing, inp.floor_height)
+        total_height = m["total_height"]
+        perimeter = m["facade_area"] / total_height if total_height else 0.0
+        return Geometry(
+            build_area=m["build_area"], perimeter=perimeter, total_height=total_height,
+            building_volume=m["building_volume"], facade_area=m["facade_area"],
+            total_area=m["total_area"], floors=m["floors"],
+        )
+
     length = max(inp.building_length, 0.0)
     width = max(inp.building_width, 0.0)
     # Форма здания: footprint — доля застройки/кровли/фундамента; facade — длина
