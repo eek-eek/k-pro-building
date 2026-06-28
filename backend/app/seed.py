@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .calc.pricing import seed_prices
+from .calc.units import seed_units
 from .database import SessionLocal, init_db
 from .norms.registry import SEED_DOCUMENTS
 from .norms.resolver import ensure_documents
@@ -24,6 +25,7 @@ def run_seed() -> None:
         for obj_type in OBJECT_TYPES:
             ensure_documents(db, obj_type)
         seed_prices(db)
+        seed_units(db)
         seed_prompts(db)
 
 

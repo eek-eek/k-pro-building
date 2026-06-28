@@ -236,3 +236,14 @@ class BuildingObject(Base):
     zone_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class Unit(Base):
+    """Реестр канонических единиц измерения (см. app/calc/units.py)."""
+
+    __tablename__ = "units"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    title: Mapped[str] = mapped_column(String(64), default="")
+    dimension: Mapped[str] = mapped_column(String(16))  # labor_time|machine_time|mass|volume|area|count|length|set
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
