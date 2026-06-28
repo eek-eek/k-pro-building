@@ -56,3 +56,17 @@ frame_concrete,bad_unit,Кривой,labor,м³,1,100,Астана,ССЦ-2026,e
         work_key="frame_concrete", code="concrete_b25",
         region="Астана", price_level="ССЦ-2026").first()
     assert row is not None and row.price == 31000 and row.source == "ssc"
+
+
+def test_cli_generalized(tmp_path):
+    from app.gosdata.__main__ import main
+    p = tmp_path / "g.csv"
+    p.write_text("object_type,value,price_level\nСклад,175000,ССЦ-2026\n", encoding="utf-8")
+    rc = main(["app.gosdata", "generalized", str(p)])
+    assert rc == 0
+
+
+def test_cli_bad_args():
+    from app.gosdata.__main__ import main
+    assert main(["app.gosdata"]) == 2
+    assert main(["app.gosdata", "wat", "x.csv"]) == 2

@@ -1,0 +1,3 @@
+work_key,code,official_code,name,kind,unit,consumption,rank,price,region,price_level,source,needs_review
+frame_concrete,concrete_b25,,Бетон товарный B25,material,м³,1.02,,31000,Астана,ССЦ-2026,ssc,false
+frame_concrete,concreter4,,Бетонщик 4 р.,labor,чел-ч,2.85,4,3600,Астана,ЕРЕР-2026,erer,false
