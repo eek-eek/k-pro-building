@@ -475,7 +475,7 @@ function renderResult(r) {
       <button class="btn sm" id="satuBtn" title="Обновить цены материалов из Satu.kz (розница)">Цены материалов: Satu</button>
       <span class="hint">Раскройте строку (▸) — правьте ресурсы (расход/цена), добавляйте «+ ресурс». Сервер пересчитает итоги и создаст версию.</span>
     </div></div>`);
-  parts.push(renderTotals(r.totals));
+  parts.push(renderTotals(r.totals, r.cost_anchor));
   parts.push(`<div id="recsCard"></div>`);
   document.getElementById("result").innerHTML = parts.join("");
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
@@ -667,16 +667,29 @@ function wireTable() {
   tb.querySelectorAll(".cell-edit, .res-edit").forEach((el) =>
     el.addEventListener("change", () => { syncEdits(); rerenderTbody(); }));
 }
-function renderTotals(t) {
+function renderTotals(t, anchor) {
   if (!t) return "";
   const row = (label, val, cls = "") => `<div class="t-row ${cls}"><span>${label}</span><span>${money(val)} ₸</span></div>`;
+  let anchorHtml = "";
+  if (anchor && anchor.value) {
+    const dev = anchor.deviation_pct;
+    const devCls = Math.abs(dev) > 25 ? "warn" : "ok";
+    const prov = anchor.provisional ? ` <span class="badge">предварительно</span>` : "";
+    const src = anchor.source_code ? ` · источник: ${escapeHtml(anchor.source_code)}` : "";
+    anchorHtml = `<div class="anchor-box">
+      <div class="anchor-head">Укрупнённый ориентир РК${prov}</div>
+      <div class="t-row"><span>Укрупнённо (${escapeHtml(anchor.unit)} × показатель)</span><span>${money(anchor.value)} ₸</span></div>
+      <div class="t-row ${devCls}"><span>Отклонение ресурсной сметы</span><span>${dev > 0 ? "+" : ""}${dev}%</span></div>
+      <div class="hint" style="margin-top:6px">${escapeHtml(anchor.note || "")}${src}</div>
+    </div>`;
+  }
   return `<div class="card"><h3>Итоги</h3><div class="totals">
     ${row("Прямые затраты", t.direct)}
     ${row(`Накладные (${t.overhead_pct}%)`, t.overhead)}
     ${row(`Резерв (${t.contingency_pct}%)`, t.contingency)}
     ${row(`НДС (${t.vat_pct}%)`, t.vat)}
     ${row("ИТОГО с НДС", t.grand_total, "grand")}
-  </div></div>`;
+  </div>${anchorHtml}</div>`;
 }
 async function saveManualEdit() {
   syncEdits();
