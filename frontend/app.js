@@ -1367,6 +1367,15 @@ async function renderConcept(id, city, estimates) {
     <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
   </div>`;
   let concept = null;
+  // Общая площадь = габариты × коэф.формы × этажность (как в propose_concept).
+  // При активной ИИ-форме площадь считает сервер из массинга — поле не трогаем.
+  const recomputeTotal = () => {
+    const totalEl = document.querySelector('#cFields [data-ck="total_area"]');
+    if (!totalEl || (concept && Array.isArray(concept.massing) && concept.massing.length)) return;
+    const get = (k) => Number((document.querySelector(`#cFields [data-ck="${k}"]`) || {}).value || 0);
+    totalEl.value = Math.round(get("building_length") * get("building_width")
+      * footprintFactor(document.getElementById("cForm").value) * get("floors"));
+  };
   const drawMassing = async () => {
     await ensureThree();
     // Если для концепта сгенерирована ИИ-форма — рендерим её, а не пресет.
@@ -1394,10 +1403,11 @@ async function renderConcept(id, city, estimates) {
       </div>`;
       document.getElementById("cToEstimate").disabled = !!has;
       document.getElementById("cGenForm").disabled = !!has;
-      // живое обновление 3D-макета при правке габарита/этажности
+      // живое обновление площади и 3D-макета при правке габарита/этажности
       document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
-        el.addEventListener("input", () => drawMassing()));
+        el.addEventListener("input", () => { recomputeTotal(); drawMassing(); }));
       snapFloorsToInt(document.querySelector('#cFields [data-ck="floors"]'));
+      recomputeTotal();
       drawMassing();
     } catch (e) {
       document.getElementById("cFields").innerHTML =
@@ -1420,6 +1430,8 @@ async function renderConcept(id, city, estimates) {
       onSave: (boxes, fh) => {
         concept.massing = boxes;
         concept.floor_height = fh;
+        const totalEl = document.querySelector('#cFields [data-ck="total_area"]');
+        if (totalEl) totalEl.value = Math.round(boxes.reduce((s, b) => s + b.w * b.d * b.floors, 0));
         drawMassing();
         toast("Форма ИИ применена — нажмите «Создать смету»");
       },
@@ -1456,6 +1468,11 @@ async function renderConcept(id, city, estimates) {
   await load();
 }
 function cField(label, key, val) {
+  // total_area — производная (габариты × коэф.формы × этажность), только для чтения
+  if (key === "total_area")
+    return `<div class="field"><label>${label}</label>
+      <input type="number" data-ck="${key}" value="${escapeAttr(val)}" readonly
+        title="считается автоматически из габаритов, формы и этажности"></div>`;
   const attrs = key === "floors" ? `step="1" min="1"` : `step="0.1"`;  // этажи — целые
   return `<div class="field"><label>${label}</label>
     <input type="number" ${attrs} data-ck="${key}" value="${escapeAttr(val)}"></div>`;
@@ -1463,16 +1480,21 @@ function cField(label, key, val) {
 
 // ── 3D-макет здания (массинг) на Three.js ──
 // Ключи форм синхронны с backend app/calc/forms.py
+// fp — коэффициент застройки (доля от bbox), синхронно с backend app/calc/forms.py
 const BUILDING_FORMS = [
-  { key: "box", label: "Брусок" },
-  { key: "tower", label: "Башня" },
-  { key: "court", label: "L / П-двор" },
-  { key: "stepped", label: "Ступенчатое" },
-  { key: "dome", label: "Купол (hi-fi)" },
-  { key: "gable", label: "Дом со скатной крышей" },
-  { key: "podium", label: "Стилобат + башня" },
-  { key: "cylinder", label: "Цилиндр" },
+  { key: "box", label: "Брусок", fp: 1.00 },
+  { key: "tower", label: "Башня", fp: 0.70 },
+  { key: "court", label: "L / П-двор", fp: 0.72 },
+  { key: "stepped", label: "Ступенчатое", fp: 0.90 },
+  { key: "dome", label: "Купол (hi-fi)", fp: 0.85 },
+  { key: "gable", label: "Дом со скатной крышей", fp: 1.00 },
+  { key: "podium", label: "Стилобат + башня", fp: 0.85 },
+  { key: "cylinder", label: "Цилиндр", fp: 0.80 },
 ];
+function footprintFactor(form) {
+  const f = BUILDING_FORMS.find((x) => x.key === form);
+  return f ? f.fp : 1.0;
+}
 
 let _massing = null;  // активный рендер-цикл, чтобы переиспользовать/гасить
 
