@@ -21,7 +21,7 @@ from ..database import get_db
 from ..geo import bbox_dims_m, polygon_area_m2
 from ..jobs import job_manager
 from ..llm import get_provider
-from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
+from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, NormDocument, PriceItem, Prompt
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
 from ..prompts import PROMPT_DEFAULTS
@@ -167,6 +167,9 @@ def delete_estimate(estimate_id: int, db: Session = Depends(get_db)) -> Response
     if est is None:
         raise HTTPException(status_code=404, detail="estimate not found")
     est.current_version_id = None
+    # Job-строки расчёта ссылаются на смету (FK без ondelete) — обнуляем связь,
+    # иначе удаление падает на FOREIGN KEY constraint.
+    db.query(Job).filter_by(estimate_id=estimate_id).update({"estimate_id": None})
     db.flush()
     db.delete(est)
     db.commit()
@@ -633,8 +636,8 @@ def object_concept(object_id: int, object_type: str = "Жилой дом",
 
 
 @router.post("/objects/{object_id}/estimate")
-def object_create_estimate(object_id: int, body: BuildingInput | None = Body(None),
-                           db: Session = Depends(get_db)) -> dict:
+async def object_create_estimate(object_id: int, body: BuildingInput | None = Body(None),
+                                 db: Session = Depends(get_db)) -> dict:
     obj = db.get(BuildingObject, object_id)
     if obj is None:
         raise HTTPException(status_code=404, detail="object not found")
@@ -645,15 +648,15 @@ def object_create_estimate(object_id: int, body: BuildingInput | None = Body(Non
         inp = propose_concept(obj.area_m2 or (length * width), length, width,
                               obj.city, "Жилой дом", None)
         inp.project_name = obj.name or "Смета"
-    profile = resolve_norm_profile(db, inp)
-    result = build_estimate(db, inp, profile)
+    # Расчёт идёт фоновой задачей со стримом статусов (тот же оверлей, что и в
+    # основном потоке): создаём контейнер сметы сразу, версию считает job.
     est = Estimate(name=inp.project_name or obj.name, object_type=inp.object_type,
                    city=inp.city, object_id=object_id)
     db.add(est)
-    db.flush()
-    version = create_version(db, est, inp, result, source="initial")
     db.commit()
-    return {"estimate_id": est.id, "version_number": version.version_number}
+    runtime = job_manager.create(est.id)
+    await job_manager.start(runtime, inp)
+    return {"job_id": runtime.id, "estimate_id": est.id}
 
 
 @router.post("/objects/{object_id}/check-zone")
