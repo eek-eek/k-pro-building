@@ -38,11 +38,14 @@ class GeminiProvider(LLMProvider):
 
         url = ENDPOINT.format(model=self.model)
         try:
+            # Ключ — в заголовке, а не в query-строке (не попадает в логи/прокси).
             resp = httpx.post(
                 url,
-                params={"key": self.api_key},
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
                 timeout=120.0,
             )
         except httpx.HTTPError as exc:  # сетевые проблемы

@@ -43,3 +43,37 @@ def test_documents_seeded_per_object_type(db):
     codes = {s.code for s in profile.sources}
     assert "ТР РК №435-2023" in codes  # общий обязательный
     assert any("3.02-01-2023" in c for c in codes)  # профильный жилой
+
+
+def test_persist_llm_rules_is_idempotent(db):
+    """Повторное сохранение тех же LLM-правил не плодит дубликаты строк."""
+    from app.models import NormRule
+    from app.norms.resolver import _persist_llm_rules
+    from app.schemas import NormParam
+
+    inp = _input(object_type="Производственный объект", structure_type="Сборный железобетон")
+    params = {
+        "rebar_kg_per_m3": NormParam(
+            category="rebar_kg_per_m3", value=95, unit="кг/м³", source="llm",
+            confidence=0.7,
+        )
+    }
+    _persist_llm_rules(db, inp, params, {})
+    # повтор с обновлённым значением — должно обновить ту же строку, не добавить
+    params["rebar_kg_per_m3"].value = 99
+    _persist_llm_rules(db, inp, params, {})
+
+    rows = (
+        db.query(NormRule)
+        .filter_by(object_type=inp.object_type, category="rebar_kg_per_m3", source="llm")
+        .all()
+    )
+    assert len(rows) == 1  # обновление, а не дубль
+    assert rows[0].value == 99
+
+
+def test_discriminators_in_signature_and_attrs_align():
+    """Условия правил и сигнатура кэша используют один набор атрибутов."""
+    from app.norms.resolver import _input_attrs
+    inp = _input()
+    assert set(_input_attrs(inp)) == set(inp.discriminators())

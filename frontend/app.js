@@ -417,14 +417,20 @@ async function runCalc(id) {
 function listenJob(jobId, stepsEl, onDone, onEnd) {
   const src = new EventSource(`/api/estimate/${jobId}/events`);
   src.addEventListener("status", (ev) => {
-    const st = JSON.parse(ev.data);
-    stepsEl.innerHTML = (st.steps || []).map((s) => {
-      const mark = s.status === "done" ? "✓" : s.status === "error" ? "!" : s.status === "running" ? "…" : "·";
-      return `<li class="${s.status}"><span class="mark">${mark}</span><span>${escapeHtml(s.label)}` +
-        (s.detail ? ` — <span class="muted">${escapeHtml(s.detail)}</span>` : "") + `</span></li>`;
-    }).join("");
-    if (st.status === "error") { toast(st.error || "Ошибка расчёта", true); src.close(); onEnd && onEnd(); }
-    else if (st.status === "done") { src.close(); onDone && onDone(); }
+    try {
+      const st = JSON.parse(ev.data);
+      stepsEl.innerHTML = (st.steps || []).map((s) => {
+        const mark = s.status === "done" ? "✓" : s.status === "error" ? "!" : s.status === "running" ? "…" : "·";
+        return `<li class="${s.status}"><span class="mark">${mark}</span><span>${escapeHtml(s.label)}` +
+          (s.detail ? ` — <span class="muted">${escapeHtml(s.detail)}</span>` : "") + `</span></li>`;
+      }).join("");
+      if (st.status === "error") { toast(st.error || "Ошибка расчёта", true); src.close(); onEnd && onEnd(); }
+      else if (st.status === "done") { src.close(); onDone && onDone(); }
+    } catch (err) {
+      // ошибка парсинга/рендера не должна оставить кнопку заблокированной / EventSource открытым
+      toast(err.message || "Ошибка обработки статуса", true);
+      src.close(); onEnd && onEnd();
+    }
   });
   src.addEventListener("end", () => { src.close(); onEnd && onEnd(); });
   src.onerror = () => { src.close(); onEnd && onEnd(); };
@@ -579,12 +585,13 @@ function resAddRow(i) {
 }
 function renderLines(r) {
   const rows = [];
+  const sectionTotals = r.section_totals || {};
   let section = null;
   let sIdx = 0;
   DETAIL.lines.forEach((ln, i) => {
     if (ln.section !== section) {
       section = ln.section; sIdx += 1;
-      const sub = r.section_totals[ln.section];
+      const sub = sectionTotals[ln.section];
       rows.push(`<tr class="section-row"><td class="snum">${sIdx}</td><td colspan="6">${escapeHtml(ln.section)}</td>
         <td class="num">${sub != null ? money(sub) + " ₸" : ""}</td></tr>`);
     }

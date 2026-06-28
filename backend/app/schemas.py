@@ -35,20 +35,28 @@ class BuildingInput(BaseModel):
     works: list[str] = Field(default_factory=list)
     assumptions: str = ""
 
-    def signature(self) -> str:
-        """Хэш профиля, влияющего на выбор норм (без названий/процентов/цен)."""
-        payload = {
+    def discriminators(self) -> dict[str, str]:
+        """Атрибуты, влияющие на выбор норм (без названий/процентов/цен).
+
+        Единый источник истины для сигнатуры кэша, сопоставления правил и
+        условий, под которыми правила сохраняются в БД. Значения — строки,
+        чтобы корректно сравниваться с сохранёнными JSON-условиями.
+        """
+        return {
             "object_type": self.object_type,
             "structure_type": self.structure_type,
             "foundation_type": self.foundation_type,
             "finish_level": self.finish_level,
             "engineering_level": self.engineering_level,
-            "basement": self.basement,
-            "parking": self.parking,
+            "basement": "да" if self.basement else "нет",
+            "parking": "да" if self.parking else "нет",
             # регион влияет на нормы/климат (теплотехника)
             "region": self.city.split("/")[0].strip().lower(),
         }
-        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    def signature(self) -> str:
+        """Хэш профиля, влияющего на выбор норм."""
+        raw = json.dumps(self.discriminators(), ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
