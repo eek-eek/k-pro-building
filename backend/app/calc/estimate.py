@@ -12,6 +12,7 @@ from ..schemas import (
     EstimateTotals,
     NormProfile,
 )
+from .generalized import compute_cost_anchor
 from .geometry import derive
 from .pricing import get_price
 from .resource_catalog import db_snapshot_for, rollup
@@ -195,6 +196,15 @@ def build_estimate(
           and not profile.cross_check.ran and profile.cross_check.reason):
         warnings.append(f"Кросс-проверка включена, но не выполнена: {profile.cross_check.reason}.")
 
+    # Укрупнённый ориентир РК (НДЦС/УСН) — сверка ресурсной сметы; не меняет итоги.
+    cost_anchor = compute_cost_anchor(db, inp, totals.grand_total)
+    if cost_anchor is not None and abs(cost_anchor.deviation_pct) > 25:
+        warnings.append(
+            f"Ресурсная смета отклоняется от укрупнённого ориентира РК на "
+            f"{cost_anchor.deviation_pct:+.0f}% (укрупнённо ≈ {cost_anchor.value:,.0f} ₸"
+            + ("; предварительный показатель" if cost_anchor.provisional else "") + ")."
+        )
+
     clarifications = [
         "Полный комплект проектной документации (АР, КР, ОВиК, ВК, ЭОМ, СС).",
         "Толщина и армирование фундаментной плиты; толщины перекрытий, сечения колонн/стен.",
@@ -216,6 +226,7 @@ def build_estimate(
         lines=lines,
         section_totals=section_totals,
         totals=totals,
+        cost_anchor=cost_anchor,
         contractor_questions=CONTRACTOR_QUESTIONS,
         clarifications=clarifications,
         generated_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -282,10 +293,19 @@ def recompute_estimate(
         contingency_pct=inp.contingency_pct, subtotal_with_contingency=subtotal2,
         vat=vat, vat_pct=inp.vat_pct, grand_total=grand,
     )
+    # перенести укрупнённый якорь, пересчитав отклонение от нового итога
+    anchor = prev.cost_anchor
+    if anchor is not None:
+        anchor = anchor.model_copy(update={
+            "resource_grand": round(grand),
+            "deviation_pct": round((grand - anchor.value) / anchor.value * 100, 1)
+                              if anchor.value else 0.0,
+        })
     return EstimateResult(
         project_name=prev.project_name, city=prev.city, object_type=prev.object_type,
         precision_class=prev.precision_class, warnings=prev.warnings,
         sources=prev.sources, volumes=prev.volumes, lines=final_lines,
+        cost_anchor=anchor,
         section_totals=section_totals, totals=totals,
         contractor_questions=prev.contractor_questions,
         clarifications=prev.clarifications,

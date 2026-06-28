@@ -54,3 +54,30 @@ def test_compute_cost_anchor_none_when_no_indicator(db):
     from app.schemas import BuildingInput
     anchor = compute_cost_anchor(db, BuildingInput(object_type="НетТакого"), 1.0)
     assert anchor is None
+
+
+def test_build_estimate_attaches_anchor(db):
+    from app.calc import build_estimate
+    from app.norms import resolve_norm_profile
+    from app.schemas import BuildingInput
+    inp = BuildingInput(demo_mode=True, use_search=False, object_type="Жилой дом")
+    profile = resolve_norm_profile(db, inp)
+    r = build_estimate(db, inp, profile)
+    assert r.cost_anchor is not None
+    assert r.cost_anchor.value > 0
+    assert r.cost_anchor.resource_grand == round(r.totals.grand_total)
+    assert r.cost_anchor.provisional is True
+
+
+def test_recompute_carries_anchor(db):
+    from app.calc import build_estimate, recompute_estimate
+    from app.norms import resolve_norm_profile
+    from app.schemas import BuildingInput
+    inp = BuildingInput(demo_mode=True, use_search=False, object_type="Жилой дом")
+    profile = resolve_norm_profile(db, inp)
+    r = build_estimate(db, inp, profile)
+    assert r.cost_anchor is not None
+    r2 = recompute_estimate(r, [ln.model_copy(deep=True) for ln in r.lines], inp)
+    assert r2.cost_anchor is not None
+    assert r2.cost_anchor.value == r.cost_anchor.value  # показатель не меняется
+    assert r2.cost_anchor.resource_grand == round(r2.totals.grand_total)
