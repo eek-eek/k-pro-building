@@ -373,8 +373,12 @@ async function viewDetail(id) {
         form: formEl ? formEl.value : (inp.form || "box"),
       });
     };
-    document.getElementById("genFormBtn").addEventListener("click",
-      () => openFormGenModal(id, drawSmetaMassing));
+    document.getElementById("genFormBtn").addEventListener("click", () => openFormGenModal({
+      base: collectInputs(document.getElementById("inputs")),
+      onSave: (boxes, fh) => saveGeneratedForm(id, boxes, fh),
+      onClose: drawSmetaMassing,
+      saveLabel: "Сохранить форму и пересчитать",
+    }));
     const resetFormBtn = document.getElementById("resetFormBtn");
     if (resetFormBtn) resetFormBtn.addEventListener("click", () => {
       if (!confirm("Сбросить произвольную форму и вернуться к габаритам из исходных данных?")) return;
@@ -473,8 +477,9 @@ function listenJob(jobId, stepsEl, onDone, onEnd) {
 }
 
 // ── ИИ-генерация формы здания (массинг) ──
-function openFormGenModal(id, onClose) {
-  const base = collectInputs(document.getElementById("inputs"));
+// opts: { base, onSave(boxes, fh), onClose, saveLabel } — переиспользуется на экране
+// сметы (пересчёт) и на экране концепта объекта (запись формы в концепт).
+function openFormGenModal({ base, onSave, onClose, saveLabel }) {
   let current = null;  // последняя валидная генерация {boxes, floor_height}
   const ov = document.createElement("div");
   ov.className = "form-modal-ov";
@@ -488,14 +493,14 @@ function openFormGenModal(id, onClose) {
           placeholder="напр.: Г-образный жилой дом 12 этажей; или стилобат 3 этажа с башней 16 этажей сверху"></textarea>
         <div class="row-actions">
           <button class="btn primary" id="fmGen">Сгенерировать</button>
-          <span class="fm-hint">Базовые габариты — из сметы. ИИ проверит форму на нормы РК.</span>
+          <span class="fm-hint">Базовые габариты — из текущих параметров. ИИ проверит форму на нормы РК.</span>
         </div>
         <div id="fmMsg" class="fm-msg"></div>
         <div id="fmPreview" class="massing fm-preview"></div>
       </div>
       <div class="fm-foot">
         <button class="btn" id="fmCancel">Отмена</button>
-        <button class="btn accent" id="fmSave" disabled>Сохранить форму и пересчитать</button>
+        <button class="btn accent" id="fmSave" disabled>${saveLabel || "Сохранить форму"}</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -540,10 +545,10 @@ function openFormGenModal(id, onClose) {
     }
   });
 
-  saveBtn.addEventListener("click", async () => {
+  saveBtn.addEventListener("click", () => {
     if (!current) return;
-    ov.remove(); document.body.style.overflow = "";  // оверлей расчёта покажет прогресс
-    await saveGeneratedForm(id, current.boxes, current.floor_height);
+    ov.remove(); document.body.style.overflow = "";
+    onSave(current.boxes, current.floor_height);
   });
 }
 
@@ -1357,12 +1362,19 @@ async function renderConcept(id, city, estimates) {
       <button class="btn" id="cReload">Предложить</button>
     </div>
     <div id="cFields" class="hint">Нажмите «Предложить», чтобы система рассчитала параметры под участок.</div>
+    <div class="row-actions" style="margin-bottom:8px"><button class="btn" id="cGenForm" disabled>✨ Сгенерировать форму (ИИ)</button></div>
     <div id="massing" class="massing"></div>
     <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
   </div>`;
   let concept = null;
   const drawMassing = async () => {
     await ensureThree();
+    // Если для концепта сгенерирована ИИ-форма — рендерим её, а не пресет.
+    if (concept && Array.isArray(concept.massing) && concept.massing.length) {
+      renderMassingBoxes(document.getElementById("massing"), concept.massing,
+        concept.floor_height || 3);
+      return;
+    }
     const get = (k) => Number((document.querySelector(`#cFields [data-ck="${k}"]`) || {}).value || 0);
     renderMassing(document.getElementById("massing"), {
       length: get("building_length"), width: get("building_width"),
@@ -1381,6 +1393,7 @@ async function renderConcept(id, city, estimates) {
         ${cField("Общая площадь, м²", "total_area", concept.total_area)}
       </div>`;
       document.getElementById("cToEstimate").disabled = !!has;
+      document.getElementById("cGenForm").disabled = !!has;
       // живое обновление 3D-макета при правке габарита/этажности
       document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
         el.addEventListener("input", () => drawMassing()));
@@ -1395,6 +1408,25 @@ async function renderConcept(id, city, estimates) {
   document.getElementById("cReload").addEventListener("click", load);
   // смена формы — перезапрос концепта (форма меняет площадь) + перерисовка макета
   document.getElementById("cForm").addEventListener("change", load);
+  document.getElementById("cGenForm").addEventListener("click", () => {
+    if (!concept) return;
+    const get = (k) => Number((document.querySelector(`#cFields [data-ck="${k}"]`) || {}).value || 0);
+    openFormGenModal({
+      base: {
+        object_type: document.getElementById("cType").value,
+        building_length: get("building_length"), building_width: get("building_width"),
+        floors: get("floors"), floor_height: concept.floor_height || 3,
+      },
+      onSave: (boxes, fh) => {
+        concept.massing = boxes;
+        concept.floor_height = fh;
+        drawMassing();
+        toast("Форма ИИ применена — нажмите «Создать смету»");
+      },
+      onClose: drawMassing,
+      saveLabel: "Применить форму",
+    });
+  });
   document.getElementById("cToEstimate").addEventListener("click", async () => {
     // одна смета на объект: если уже есть — предложить перейти, не плодить дубли
     if (has) {
