@@ -4,9 +4,11 @@ from __future__ import annotations
 from app.gosdata.core import run_import_generalized
 from app.models import GeneralizedIndicator
 
+# Синтетические ключи (не совпадают с сид-данными и city-резолвом), чтобы импорт
+# в тестах не подменял засеянные показатели и не ломал якорные тесты по порядку сбора.
 _CSV = """object_type,region,value,unit,price_level,source_code,needs_review
-Жилой дом,Астана,310000,м²,ССЦ-2026,НДЦС РК 8.02-01-2025,false
-Офис,Астана,355000,м²,ССЦ-2026,НДЦС РК 8.02-01-2025,false
+ТестЖилой,ТестРегион,310000,м²,ТестУровень,НДЦС РК 8.02-01-2025,false
+ТестОфис,ТестРегион,355000,м²,ТестУровень,НДЦС РК 8.02-01-2025,false
 """
 
 
@@ -14,7 +16,7 @@ def test_import_generalized_inserts(db):
     report = run_import_generalized(db, _CSV)
     assert report.inserted == 2 and report.skipped == 0 and not report.errors
     row = db.query(GeneralizedIndicator).filter_by(
-        object_type="Жилой дом", region="Астана", price_level="ССЦ-2026").first()
+        object_type="ТестЖилой", region="ТестРегион", price_level="ТестУровень").first()
     assert row is not None
     assert row.value == 310000
     assert row.source_code == "НДЦС РК 8.02-01-2025"
@@ -26,7 +28,7 @@ def test_import_generalized_idempotent_upsert(db):
     r2 = run_import_generalized(db, _CSV.replace("310000", "315000"))
     assert r2.updated == 2 and r2.inserted == 0  # те же ключи → обновление
     row = db.query(GeneralizedIndicator).filter_by(
-        object_type="Жилой дом", region="Астана", price_level="ССЦ-2026").first()
+        object_type="ТестЖилой", region="ТестРегион", price_level="ТестУровень").first()
     assert row.value == 315000
 
 
@@ -61,7 +63,8 @@ frame_concrete,bad_unit,Кривой,labor,м³,1,100,Астана,ССЦ-2026,e
 def test_cli_generalized(tmp_path):
     from app.gosdata.__main__ import main
     p = tmp_path / "g.csv"
-    p.write_text("object_type,value,price_level\nСклад,175000,ССЦ-2026\n", encoding="utf-8")
+    p.write_text("object_type,region,value,price_level\nТестCLI,ТестРегион,175000,ТестУровень\n",
+                 encoding="utf-8")
     rc = main(["app.gosdata", "generalized", str(p)])
     assert rc == 0
 
