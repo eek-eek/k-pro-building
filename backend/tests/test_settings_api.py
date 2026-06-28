@@ -62,6 +62,15 @@ def test_masked_value_never_saved_as_key():
     assert s["has_keys"]["openai"] is True
 
 
+def test_cross_check_settings_default_and_persist():
+    s = client.get("/api/settings").json()
+    assert "cross_check_enabled" in s and "cross_check_provider" in s
+    client.put("/api/settings", json={"cross_check_enabled": True, "cross_check_provider": "openai"})
+    s2 = client.get("/api/settings").json()
+    assert s2["cross_check_enabled"] is True
+    assert s2["cross_check_provider"] == "openai"
+
+
 def test_test_connection_demo_returns_not_ok():
     r = client.post("/api/settings/test", json={"provider": "demo"}).json()
     assert r["ok"] is False

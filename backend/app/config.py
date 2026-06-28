@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-4-8"
     openai_model: str = "gpt-4o"
     llm_use_search: bool = True
+    cross_check_enabled: bool = False
+    cross_check_provider: str = "openai"  # проверяющий провайдер (ансамбль)
 
     # DB
     database_url: str = "sqlite:///./data/ai_smeta.db"

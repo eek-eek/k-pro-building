@@ -29,8 +29,9 @@ MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
 SETTING_KEYS = (
     "llm_provider", "gemini_api_key", "anthropic_api_key", "openai_api_key",
     "gemini_model", "anthropic_model", "openai_model", "llm_use_search",
+    "cross_check_enabled", "cross_check_provider",
 )
-_BOOL_KEYS = {"llm_use_search"}
+_BOOL_KEYS = {"llm_use_search", "cross_check_enabled"}
 
 
 @dataclass
@@ -43,6 +44,8 @@ class EffectiveSettings:
     anthropic_model: str
     openai_model: str
     llm_use_search: bool
+    cross_check_enabled: bool = False
+    cross_check_provider: str = "openai"
 
     def active_key(self) -> str:
         return getattr(self, f"{self.llm_provider}_api_key", "")
@@ -77,6 +80,8 @@ def get_effective_settings(db: Session) -> EffectiveSettings:
         anthropic_model=pick("anthropic_model"),
         openai_model=pick("openai_model"),
         llm_use_search=_as_bool(pick("llm_use_search")),
+        cross_check_enabled=_as_bool(pick("cross_check_enabled")),
+        cross_check_provider=pick("cross_check_provider"),
     )
 
 

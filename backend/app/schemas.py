@@ -270,6 +270,8 @@ class SettingsUpdate(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     use_search: Optional[bool] = None
+    cross_check_enabled: Optional[bool] = None
+    cross_check_provider: Optional[str] = None
 
 
 class TestConnectionRequest(BaseModel):

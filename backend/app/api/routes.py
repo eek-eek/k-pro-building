@@ -459,6 +459,8 @@ def get_settings_api(db: Session = Depends(get_db)) -> dict:
         "masked_key": mask_key(eff.active_key()),
         "has_key": bool(eff.active_key()),
         "use_search": eff.llm_use_search,
+        "cross_check_enabled": eff.cross_check_enabled,
+        "cross_check_provider": eff.cross_check_provider,
         "catalog": MODEL_CATALOG,
         # Ключи/модели по каждому провайдеру — чтобы фронт показывал и правил
         # именно выбранного провайдера (а не подставлял ключ активного для всех).
@@ -480,6 +482,10 @@ def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db),
         updates[f"{provider}_model"] = body.model
     if body.use_search is not None:
         updates["llm_use_search"] = body.use_search
+    if body.cross_check_enabled is not None:
+        updates["cross_check_enabled"] = body.cross_check_enabled
+    if body.cross_check_provider is not None:
+        updates["cross_check_provider"] = body.cross_check_provider
     # Ключ обновляем только если прислали непустое РЕАЛЬНОЕ значение.
     # Маскированную строку (содержит «•») игнорируем — иначе в БД попадёт мусор
     # (напр. при переключении провайдера в UI поле могло держать чужой masked-ключ).
