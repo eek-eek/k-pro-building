@@ -11,6 +11,7 @@ from ..calc import build_estimate
 from ..database import SessionLocal
 from ..models import Estimate, Job
 from ..norms import resolve_norm_profile
+from ..versioning import create_version
 from ..schemas import BuildingInput, EstimateResult, JobStatus, JobStep, to_jsonable
 
 # Канонические шаги пайплайна (отображаются на фронте).
@@ -58,11 +59,15 @@ class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[str, JobRuntime] = {}
 
-    def create(self) -> JobRuntime:
-        """Только in-memory (без блокирующей записи в БД на event loop)."""
+    def create(self, estimate_id: int) -> JobRuntime:
+        """Только in-memory (без блокирующей записи в БД на event loop).
+
+        Строка Job пишется в рабочем потоке в _execute, чтобы не блокировать
+        event loop синхронным коммитом.
+        """
         job_id = str(uuid.uuid4())
         steps = [JobStep(key=k, label=l) for k, l in STEP_DEFS]
-        runtime = JobRuntime(id=job_id, steps=steps)
+        runtime = JobRuntime(id=job_id, steps=steps, estimate_id=estimate_id)
         self._jobs[job_id] = runtime
         return runtime
 
@@ -107,7 +112,9 @@ class JobManager:
         db = SessionLocal()
         try:
             # Запись pending-строки в БД — уже в рабочем потоке, не на loop.
-            db.add(Job(id=runtime.id, status="running", steps=to_jsonable(runtime.steps)))
+            db.add(Job(id=runtime.id, status="running",
+                       steps=to_jsonable(runtime.steps),
+                       estimate_id=runtime.estimate_id))
             db.commit()
 
             self._set_step(runtime, "parse", "running")
@@ -129,14 +136,10 @@ class JobManager:
             result = build_estimate(db, inp, profile)
             self._set_step(runtime, "estimate", "done")
 
-            est = Estimate(
-                input=to_jsonable(inp),
-                result=to_jsonable(result),
-                total=result.totals.grand_total,
-            )
-            db.add(est)
-            db.commit()
-            runtime.estimate_id = est.id
+            estimate = db.get(Estimate, runtime.estimate_id)
+            if estimate is None:
+                raise ValueError(f"Estimate {runtime.estimate_id} не найден")
+            create_version(db, estimate, inp, result, source="initial")
             runtime.result = result
             runtime.status = "done"
             self._set_step(runtime, "done", "done")
@@ -144,14 +147,15 @@ class JobManager:
             job_row = db.get(Job, runtime.id)
             if job_row:
                 job_row.status = "done"
-                job_row.estimate_id = est.id
+                job_row.estimate_id = runtime.estimate_id
                 job_row.progress = 100
                 job_row.steps = to_jsonable(runtime.steps)
-                db.commit()
+            db.commit()
         except Exception as exc:  # noqa: BLE001 — любую ошибку фиксируем в статус
             runtime.status = "error"
             runtime.error = f"{type(exc).__name__}: {exc}"
             self._publish(runtime)
+            db.rollback()
             self._persist_error(runtime)
         finally:
             runtime.finished = True

@@ -5,6 +5,7 @@ from .calc.pricing import seed_prices
 from .database import SessionLocal, init_db
 from .norms.registry import SEED_DOCUMENTS
 from .norms.resolver import ensure_documents
+from .prompts import seed_prompts
 
 # Уникальные типы объектов из интерфейса.
 OBJECT_TYPES = [
@@ -23,6 +24,7 @@ def run_seed() -> None:
         for obj_type in OBJECT_TYPES:
             ensure_documents(db, obj_type)
         seed_prices(db)
+        seed_prompts(db)
 
 
 if __name__ == "__main__":

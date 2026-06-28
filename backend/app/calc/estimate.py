@@ -41,6 +41,8 @@ SECTIONS: list[tuple[int, str, list[str], list[str]]] = [
      ["landscaping"], ["благоустр"]),
 ]
 
+PREP_TITLE = "Подготовительные работы и временные сооружения"
+
 CONTRACTOR_QUESTIONS = [
     "На основании каких нормативных документов и сборников расценок составлена смета "
     "(СН РК, РДС РК, собственные нормативы)?",
@@ -196,4 +198,74 @@ def build_estimate(
         contractor_questions=CONTRACTOR_QUESTIONS,
         clarifications=clarifications,
         generated_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+def recompute_estimate(
+    prev: EstimateResult, lines: list[EstimateLine], inp: BuildingInput
+) -> EstimateResult:
+    """Пересчитать все суммы из `lines` (сервер — единственный источник истины),
+    сохранив неценовой контекст из `prev`. Округление повторяет build_estimate.
+    Внимание: изменяет переданные объекты строк на месте — передавайте копии,
+    если нужны исходные."""
+    core = [ln for ln in lines if ln.no != "1.1" and ln.section != PREP_TITLE]
+    prep_existing = [ln for ln in lines if ln.no == "1.1" or ln.section == PREP_TITLE]
+
+    section_totals: dict[str, float] = {}
+    direct_core = 0.0
+    rebuilt: list[EstimateLine] = []
+    for ln in core:
+        unit_cost = ln.material_price + ln.labor_price + ln.machine_price
+        ln.total = round(ln.quantity * unit_cost)
+        rebuilt.append(ln)
+        if ln.total == 0:
+            continue
+        section_totals[ln.section] = round(section_totals.get(ln.section, 0.0) + ln.total)
+        direct_core += ln.total
+
+    final_lines: list[EstimateLine] = []
+    if prep_existing:
+        prep_total = round(direct_core * 0.015)
+        if prep_total > 0:
+            prep = prep_existing[0]
+            prep.no = "1.1"
+            prep.section = PREP_TITLE
+            prep.title = "Подготовительные работы и временные сооружения"
+            prep.unit = "усл."
+            prep.quantity = 1
+            prep.material_price = 0.0
+            prep.labor_price = prep_total
+            prep.machine_price = 0.0
+            prep.total = prep_total
+            prep.norm = "СН РК 8.02-04-2002 (аналог)"
+            prep.comment = "1.5% от прямых затрат (ориентировочно)"
+            prep.needs_review = False
+            section_totals[PREP_TITLE] = prep_total
+            direct_core += prep_total
+            final_lines.append(prep)
+    final_lines.extend(rebuilt)
+
+    direct = round(direct_core)
+    overhead = round(direct * inp.overhead_pct / 100)
+    subtotal1 = direct + overhead
+    contingency = round(subtotal1 * inp.contingency_pct / 100)
+    subtotal2 = subtotal1 + contingency
+    vat = round(subtotal2 * inp.vat_pct / 100)
+    grand = subtotal2 + vat
+
+    totals = EstimateTotals(
+        direct=direct, overhead=overhead, overhead_pct=inp.overhead_pct,
+        subtotal_with_overhead=subtotal1, contingency=contingency,
+        contingency_pct=inp.contingency_pct, subtotal_with_contingency=subtotal2,
+        vat=vat, vat_pct=inp.vat_pct, grand_total=grand,
+    )
+    return EstimateResult(
+        project_name=prev.project_name, city=prev.city, object_type=prev.object_type,
+        precision_class=prev.precision_class, warnings=prev.warnings,
+        sources=prev.sources, volumes=prev.volumes, lines=final_lines,
+        section_totals=section_totals, totals=totals,
+        contractor_questions=prev.contractor_questions,
+        clarifications=prev.clarifications,
+        generated_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        llm_narrative=prev.llm_narrative,
     )

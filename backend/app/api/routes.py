@@ -3,51 +3,61 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
-from ..calc import build_estimate
-from ..config import get_settings
+from ..calc import build_estimate, recompute_estimate
+from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
 from ..database import get_db
 from ..jobs import job_manager
-from ..models import Estimate, NormDocument, PriceItem
+from ..models import Estimate, EstimateVersion, ChatMessage, NormDocument, PriceItem, Prompt
 from ..norms import resolve_norm_profile
-from ..schemas import BuildingInput, EstimateResult, JobStatus, to_jsonable
+from ..prompts import PROMPT_DEFAULTS
+from ..schemas import (
+    BuildingInput, ChatPost, EstimateCard, EstimateCreate, EstimatePatch,
+    EstimateResult, JobStatus, ManualEditRequest, RollbackRequest, to_jsonable,
+    SettingsUpdate, TestConnectionRequest, PromptUpdate,
+)
+from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
+from ..versioning import create_version, summarize_diff
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/health")
-def health() -> dict:
-    s = get_settings()
-    return {"status": "ok", "llm_provider": s.llm_provider}
+def health(db: Session = Depends(get_db)) -> dict:
+    eff = get_effective_settings(db)
+    return {"status": "ok", "llm_provider": eff.llm_provider}
 
 
 @router.post("/estimate")
-async def create_estimate(inp: BuildingInput) -> dict:
+async def create_estimate(inp: BuildingInput, db: Session = Depends(get_db)) -> dict:
     """Создать задачу расчёта; вернуть job_id (расчёт идёт в фоне)."""
-    runtime = job_manager.create()
-    await job_manager.start(runtime, inp)
-    return {"job_id": runtime.id}
-
-
-@router.post("/estimate/sync", response_model=EstimateResult)
-def create_estimate_sync(
-    inp: BuildingInput, db: Session = Depends(get_db)
-) -> EstimateResult:
-    """Синхронный расчёт (без статусов) — для интеграций и тестов."""
-    profile = resolve_norm_profile(db, inp)
-    result = build_estimate(db, inp, profile)
-    est = Estimate(
-        input=to_jsonable(inp),
-        result=to_jsonable(result),
-        total=result.totals.grand_total,
-    )
+    est = Estimate(name=inp.project_name, object_type=inp.object_type, city=inp.city)
     db.add(est)
     db.commit()
-    return result
+    runtime = job_manager.create(est.id)
+    await job_manager.start(runtime, inp)
+    return {"job_id": runtime.id, "estimate_id": est.id}
+
+
+@router.post("/estimate/sync")
+def create_estimate_sync(inp: BuildingInput, db: Session = Depends(get_db)) -> dict:
+    """Synchronous calc — creates an Estimate container + initial version."""
+    profile = resolve_norm_profile(db, inp)
+    result = build_estimate(db, inp, profile)
+    estimate = Estimate(name=inp.project_name, object_type=inp.object_type, city=inp.city)
+    db.add(estimate)
+    db.flush()
+    version = create_version(db, estimate, inp, result, source="initial")
+    db.commit()
+    return {
+        "estimate_id": estimate.id,
+        "version_number": version.version_number,
+        "result": to_jsonable(result),
+    }
 
 
 @router.get("/estimate/{job_id}", response_model=JobStatus)
@@ -75,12 +85,99 @@ async def stream_events(job_id: str):
     return EventSourceResponse(event_gen())
 
 
+def _card(db: Session, est: Estimate) -> EstimateCard:
+    total = est.current_version.total if est.current_version else 0.0
+    vcount = db.query(EstimateVersion).filter_by(estimate_id=est.id).count()
+    mcount = db.query(ChatMessage).filter_by(estimate_id=est.id).count()
+    return EstimateCard(
+        id=est.id, name=est.name, object_type=est.object_type, city=est.city,
+        status=est.status, total=total, version_count=vcount, message_count=mcount,
+        updated_at=est.updated_at.isoformat(timespec="seconds"),
+    )
+
+
+@router.get("/estimates")
+def list_estimates(db: Session = Depends(get_db)) -> list[EstimateCard]:
+    rows = db.scalars(select(Estimate).order_by(Estimate.updated_at.desc())).all()
+    return [_card(db, e) for e in rows]
+
+
+@router.post("/estimates")
+def create_estimate_container(body: EstimateCreate, db: Session = Depends(get_db)) -> dict:
+    inp = body.input or BuildingInput()
+    est = Estimate(name=body.name or inp.project_name,
+                   object_type=inp.object_type, city=inp.city, status="draft")
+    db.add(est)
+    db.commit()
+    return {"id": est.id}
+
+
 @router.get("/estimates/{estimate_id}")
-def get_estimate(estimate_id: int, db: Session = Depends(get_db)) -> dict:
+def get_estimate_full(estimate_id: int, db: Session = Depends(get_db)) -> dict:
     est = db.get(Estimate, estimate_id)
     if est is None:
         raise HTTPException(status_code=404, detail="estimate not found")
-    return {"id": est.id, "total": est.total, "result": est.result}
+    cv = est.current_version
+    return {
+        "estimate": {"id": est.id, "name": est.name, "object_type": est.object_type,
+                     "city": est.city, "status": est.status},
+        "current_version": ({"version_number": cv.version_number, "input": cv.input,
+                             "result": cv.result, "source": cv.source} if cv else None),
+        "version_count": db.query(EstimateVersion).filter_by(estimate_id=est.id).count(),
+        "message_count": db.query(ChatMessage).filter_by(estimate_id=est.id).count(),
+    }
+
+
+@router.patch("/estimates/{estimate_id}")
+def patch_estimate(estimate_id: int, body: EstimatePatch,
+                   db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    if body.name is not None:
+        est.name = body.name
+    if body.input is not None:
+        est.object_type = body.input.object_type
+        est.city = body.input.city
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/estimates/{estimate_id}", status_code=204)
+def delete_estimate(estimate_id: int, db: Session = Depends(get_db)) -> Response:
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    est.current_version_id = None
+    db.flush()
+    db.delete(est)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/estimates/{estimate_id}/calc")
+async def calc_estimate(estimate_id: int, body: BuildingInput | None = Body(None),
+                        db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    if body is not None:
+        inp = body
+    elif est.current_version is not None:
+        inp = BuildingInput(**est.current_version.input)
+    else:
+        inp = BuildingInput(project_name=est.name or "Смета",
+                            object_type=est.object_type or "Жилой дом",
+                            city=est.city or "Астана / Казахстан")
+    # keep dashboard denorm fields in sync with the input being calculated
+    est.object_type = inp.object_type
+    est.city = inp.city
+    if not est.name:
+        est.name = inp.project_name
+    db.commit()
+    runtime = job_manager.create(estimate_id)
+    await job_manager.start(runtime, inp)
+    return {"job_id": runtime.id}
 
 
 @router.get("/norms")
@@ -99,6 +196,65 @@ def list_norms(db: Session = Depends(get_db)) -> list[dict]:
     ]
 
 
+@router.get("/estimates/{estimate_id}/versions")
+def list_versions(estimate_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    if db.get(Estimate, estimate_id) is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    rows = db.scalars(
+        select(EstimateVersion).where(EstimateVersion.estimate_id == estimate_id)
+        .order_by(EstimateVersion.version_number)
+    ).all()
+    return [{"version_number": v.version_number, "source": v.source,
+             "summary": v.summary, "total": v.total,
+             "created_at": v.created_at.isoformat(timespec="seconds")} for v in rows]
+
+
+@router.get("/estimates/{estimate_id}/versions/{version_number}")
+def get_version(estimate_id: int, version_number: int,
+                db: Session = Depends(get_db)) -> dict:
+    v = db.scalar(select(EstimateVersion).where(
+        EstimateVersion.estimate_id == estimate_id,
+        EstimateVersion.version_number == version_number))
+    if v is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    return {"version_number": v.version_number, "source": v.source,
+            "input": v.input, "result": v.result, "summary": v.summary}
+
+
+@router.post("/estimates/{estimate_id}/manual-edit")
+def manual_edit(estimate_id: int, body: ManualEditRequest,
+                db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        raise HTTPException(status_code=404, detail="estimate not calculated")
+    prev = EstimateResult(**est.current_version.result)
+    inp = body.input or BuildingInput(**est.current_version.input)
+    new_result = recompute_estimate(prev, body.lines, inp)
+    summary = summarize_diff(prev, new_result)
+    version = create_version(db, est, inp, new_result, source="manual_edit", summary=summary)
+    db.commit()
+    return {"version_number": version.version_number, "result": to_jsonable(new_result)}
+
+
+@router.post("/estimates/{estimate_id}/rollback")
+def rollback(estimate_id: int, body: RollbackRequest,
+             db: Session = Depends(get_db)) -> dict:
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    target = db.scalar(select(EstimateVersion).where(
+        EstimateVersion.estimate_id == estimate_id,
+        EstimateVersion.version_number == body.version_number))
+    if target is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    inp = BuildingInput(**target.input)
+    result = EstimateResult(**target.result)
+    version = create_version(db, est, inp, result, source="rollback",
+                             summary=f"откат к версии {body.version_number}")
+    db.commit()
+    return {"version_number": version.version_number, "result": target.result}
+
+
 @router.get("/prices")
 def list_prices(db: Session = Depends(get_db)) -> list[dict]:
     items = db.scalars(select(PriceItem).order_by(PriceItem.key)).all()
@@ -114,3 +270,102 @@ def list_prices(db: Session = Depends(get_db)) -> list[dict]:
         }
         for i in items
     ]
+
+
+@router.get("/estimates/{estimate_id}/chat")
+def list_chat(estimate_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    if db.get(Estimate, estimate_id) is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    rows = db.scalars(
+        select(ChatMessage).where(ChatMessage.estimate_id == estimate_id)
+        .order_by(ChatMessage.id)
+    ).all()
+    vmap = {v.id: v.version_number for v in db.scalars(
+        select(EstimateVersion).where(EstimateVersion.estimate_id == estimate_id)).all()}
+    return [{"role": m.role, "content": m.content,
+             "version_number": vmap.get(m.version_id) if m.version_id is not None else None,
+             "created_at": m.created_at.isoformat(timespec="seconds")} for m in rows]
+
+
+@router.post("/estimates/{estimate_id}/chat")
+def post_chat(estimate_id: int, body: ChatPost, db: Session = Depends(get_db)) -> dict:
+    """Sync handler → runs in FastAPI threadpool, so the blocking LLM call does
+    not block the event loop and the request session stays on one thread."""
+    est = db.get(Estimate, estimate_id)
+    if est is None:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    try:
+        return run_chat_edit(db, est, body.message)
+    except ChatUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ChatEditError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/settings")
+def get_settings_api(db: Session = Depends(get_db)) -> dict:
+    eff = get_effective_settings(db)
+    return {
+        "provider": eff.llm_provider,
+        "model": eff.active_model(),
+        "masked_key": mask_key(eff.active_key()),
+        "has_key": bool(eff.active_key()),
+        "use_search": eff.llm_use_search,
+        "catalog": MODEL_CATALOG,
+    }
+
+
+@router.put("/settings")
+def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db)) -> dict:
+    eff = get_effective_settings(db)
+    provider = (body.provider or eff.llm_provider).lower()
+    updates: dict = {}
+    if body.provider is not None:
+        updates["llm_provider"] = provider
+    if body.model is not None:
+        updates[f"{provider}_model"] = body.model
+    if body.use_search is not None:
+        updates["llm_use_search"] = body.use_search
+    if body.api_key is not None and body.api_key != "":
+        if body.api_key != mask_key(getattr(eff, f"{provider}_api_key", "")):
+            updates[f"{provider}_api_key"] = body.api_key
+    save_settings(db, updates)
+    return get_settings_api(db)
+
+
+@router.post("/settings/test")
+def test_connection_api(body: TestConnectionRequest, db: Session = Depends(get_db)) -> dict:
+    ok, message = run_test_provider(db, body.provider, body.api_key, body.model)
+    return {"ok": ok, "message": message}
+
+
+@router.get("/prompts")
+def list_prompts(db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.scalars(select(Prompt).order_by(Prompt.key)).all()
+    return [{"key": p.key, "title": p.title, "description": p.description,
+             "body": p.body, "is_custom": p.is_custom} for p in rows]
+
+
+@router.put("/prompts/{key}")
+def update_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Prompt).where(Prompt.key == key))
+    if row is None:
+        raise HTTPException(status_code=404, detail="prompt not found")
+    row.body = body.body
+    row.is_custom = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/prompts/{key}/reset")
+def reset_prompt(key: str, db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Prompt).where(Prompt.key == key))
+    if row is None:
+        raise HTTPException(status_code=404, detail="prompt not found")
+    default = PROMPT_DEFAULTS.get(key)
+    if default is None:
+        raise HTTPException(status_code=404, detail="no default for prompt")
+    row.body = default["body"]
+    row.is_custom = False
+    db.commit()
+    return {"ok": True}

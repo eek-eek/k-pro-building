@@ -21,6 +21,9 @@ backend/data/*.sqlite3
 .idea/
 .vscode/
 
+# Brainstorming / visual companion scratch
+.superpowers/
+
 # Test / build artifacts
 .pytest_cache/
 .coverage
