@@ -452,6 +452,7 @@ def get_settings_api(db: Session = Depends(get_db)) -> dict:
     # GET открыт намеренно: ключ маскирован, а провайдер нужен чату/навбару.
     # Запись настроек и промпты — под require_admin.
     eff = get_effective_settings(db)
+    providers = ("gemini", "anthropic", "openai")
     return {
         "provider": eff.llm_provider,
         "model": eff.active_model(),
@@ -459,6 +460,11 @@ def get_settings_api(db: Session = Depends(get_db)) -> dict:
         "has_key": bool(eff.active_key()),
         "use_search": eff.llm_use_search,
         "catalog": MODEL_CATALOG,
+        # Ключи/модели по каждому провайдеру — чтобы фронт показывал и правил
+        # именно выбранного провайдера (а не подставлял ключ активного для всех).
+        "keys": {p: mask_key(getattr(eff, f"{p}_api_key", "")) for p in providers},
+        "models": {p: getattr(eff, f"{p}_model", "") for p in providers},
+        "has_keys": {p: bool(getattr(eff, f"{p}_api_key", "")) for p in providers},
     }
 
 
@@ -474,7 +480,10 @@ def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db),
         updates[f"{provider}_model"] = body.model
     if body.use_search is not None:
         updates["llm_use_search"] = body.use_search
-    if body.api_key is not None and body.api_key != "":
+    # Ключ обновляем только если прислали непустое РЕАЛЬНОЕ значение.
+    # Маскированную строку (содержит «•») игнорируем — иначе в БД попадёт мусор
+    # (напр. при переключении провайдера в UI поле могло держать чужой masked-ключ).
+    if body.api_key and "•" not in body.api_key:
         if body.api_key != mask_key(getattr(eff, f"{provider}_api_key", "")):
             updates[f"{provider}_api_key"] = body.api_key
     save_settings(db, updates)

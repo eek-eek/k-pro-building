@@ -34,6 +34,34 @@ def test_put_settings_keeps_key_when_masked_value_resent():
     assert client.get("/api/settings").json()["has_key"] is True
 
 
+def test_get_settings_has_per_provider_keys():
+    s = client.get("/api/settings").json()
+    assert "keys" in s and "models" in s and "has_keys" in s
+    for p in ("gemini", "anthropic", "openai"):
+        assert p in s["keys"] and p in s["models"] and p in s["has_keys"]
+
+
+def test_keys_isolated_per_provider():
+    """Ключ одного провайдера не должен попадать в другой (баг «один ключ на всех»)."""
+    client.put("/api/settings", json={"provider": "anthropic", "api_key": "sk-ant-iso-1111111111"})
+    client.put("/api/settings", json={"provider": "openai", "api_key": "sk-openai-iso-2222222222"})
+    s = client.get("/api/settings").json()
+    assert s["has_keys"]["anthropic"] is True
+    assert s["has_keys"]["openai"] is True
+    assert s["keys"]["anthropic"] != s["keys"]["openai"]  # разные ключи → разные masked
+
+
+def test_masked_value_never_saved_as_key():
+    """Присланная masked-строка (с «•») не должна перезаписать реальный ключ мусором."""
+    client.put("/api/settings", json={"provider": "openai", "api_key": "sk-openai-real-3333333333"})
+    masked = client.get("/api/settings").json()["keys"]["openai"]
+    assert "•" in masked
+    client.put("/api/settings", json={"provider": "openai", "api_key": masked})  # повтор masked
+    s = client.get("/api/settings").json()
+    assert s["keys"]["openai"] == masked          # ключ не изменился
+    assert s["has_keys"]["openai"] is True
+
+
 def test_test_connection_demo_returns_not_ok():
     r = client.post("/api/settings/test", json={"provider": "demo"}).json()
     assert r["ok"] is False

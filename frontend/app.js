@@ -905,8 +905,8 @@ async function viewSettings() {
         </div>
         <div class="grid">
           <div class="field"><label>API-ключ</label>
-            <input type="text" id="apiKey" value="${escapeAttr(s.masked_key)}" placeholder="вставьте ключ">
-            <div class="hint">Хранится на сервере; полностью в браузер не возвращается.</div></div>
+            <input type="text" id="apiKey" value="" autocomplete="off">
+            <div class="hint" id="keyHint"></div></div>
           <div class="field"><label>Модель</label><select id="model"></select></div>
         </div>
         <div class="checks"><label><input type="checkbox" id="useSearch" ${s.use_search ? "checked" : ""}> Искать актуальные нормы РК (web-grounding)</label></div>
@@ -922,12 +922,28 @@ async function viewSettings() {
     </div>`;
 
   const modelSel = document.getElementById("model");
+  const apiKeyEl = document.getElementById("apiKey");
+  const keyHint = document.getElementById("keyHint");
+  const maskedFor = (p) => (s.keys && s.keys[p]) || "";
+  const modelFor = (p) => (s.models && s.models[p]) || s.model;
   const fillModels = () => {
+    const sel = modelFor(provider);
     modelSel.innerHTML = modelsFor(provider).map((m) =>
-      `<option value="${escapeAttr(m.id)}" ${m.id === s.model ? "selected" : ""}>${escapeHtml(m.label)}</option>`).join("")
+      `<option value="${escapeAttr(m.id)}" ${m.id === sel ? "selected" : ""}>${escapeHtml(m.label)}</option>`).join("")
       || `<option value="">(нет моделей)</option>`;
   };
+  // НЕ подставляем masked-ключ в редактируемое поле (иначе при смене провайдера
+  // он мог бы сохраниться как чужой ключ). Поле всегда пустое; masked — в подсказке.
+  const fillKeyField = () => {
+    apiKeyEl.value = "";
+    const masked = maskedFor(provider);
+    apiKeyEl.placeholder = masked ? "ключ задан — оставьте пустым, чтобы не менять" : "вставьте ключ";
+    keyHint.textContent = masked
+      ? `Текущий ключ ${provider}: ${masked}. Хранится на сервере; в браузер не возвращается.`
+      : `Ключ для «${provider}» не задан.`;
+  };
   fillModels();
+  fillKeyField();
   document.querySelectorAll("#chips .chip").forEach((c) => c.addEventListener("click", () => {
     provider = c.dataset.p;
     document.querySelectorAll("#chips .chip").forEach((x) => {
@@ -935,6 +951,7 @@ async function viewSettings() {
       x.textContent = x.dataset.p + (x.dataset.p === provider ? " ✓" : "");
     });
     fillModels();
+    fillKeyField();
   }));
 
   document.getElementById("saveSettings").addEventListener("click", async () => {
@@ -943,11 +960,11 @@ async function viewSettings() {
       model: modelSel.value || undefined,
       use_search: document.getElementById("useSearch").checked,
     };
-    const key = document.getElementById("apiKey").value;
-    if (key && key !== s.masked_key) body.api_key = key;
+    const key = apiKeyEl.value.trim();
+    if (key) body.api_key = key;   // шлём только реальный новый ключ (никогда masked)
     try {
-      const upd = await Api.putSettings(body);
-      document.getElementById("apiKey").value = upd.masked_key;
+      s = await Api.putSettings(body);   // ответ содержит обновлённые per-provider карты
+      fillKeyField();                    // очистить поле + показать новый masked
       toast("Настройки сохранены");
       refreshNavProvider();
     } catch (e) { toast(e.detail || "Ошибка", true); }
@@ -956,9 +973,9 @@ async function viewSettings() {
   document.getElementById("testConn").addEventListener("click", async () => {
     const st = document.getElementById("testStatus");
     st.textContent = "Проверка…"; st.className = "test-status";
-    const key = document.getElementById("apiKey").value;
+    const key = apiKeyEl.value.trim();
     const body = { provider, model: modelSel.value || undefined };
-    if (key && key !== s.masked_key) body.api_key = key;
+    if (key) body.api_key = key;
     try {
       const r = await Api.testConn(body);
       st.textContent = (r.ok ? "● " : "● ") + r.message;
