@@ -32,12 +32,20 @@ def _wfs_features(typename: str, lat: float, lon: float, count: int = 5) -> dict
         return json.loads(r.read())
 
 
-def _containing(features: list[dict], lat: float, lon: float) -> dict | None:
+def _strict_containing(features: list[dict], lat: float, lon: float) -> dict | None:
+    """Фича, чей полигон реально накрывает точку. Без fallback — для зон (вода),
+    где «вернулось по bbox» ≠ «участок внутри»: крупный полигон зоны перекрывает
+    bbox-запрос почти везде, поэтому ложно бы пометил полгорода."""
     for f in features:
         geom = f.get("geometry") or {}
         if point_in_polygon(lon, lat, geom):
             return f
-    return features[0] if features else None  # ближайший по bbox, если ни один не накрыл
+    return None
+
+
+def _containing(features: list[dict], lat: float, lon: float) -> dict | None:
+    """Накрывающая фича, иначе ближайшая по bbox — для участка (нужны его реквизиты)."""
+    return _strict_containing(features, lat, lon) or (features[0] if features else None)
 
 
 class WfsZoningProvider(ZoningProvider):
@@ -60,7 +68,7 @@ class WfsZoningProvider(ZoningProvider):
                 wf = _wfs_features(water_layer, lat, lon).get("features", [])
             except Exception:
                 wf = []
-            if _containing(wf, lat, lon) is not None:
+            if _strict_containing(wf, lat, lon) is not None:
                 props = (plot or {}).get("properties", {})
                 return ZoneVerdict(status="restricted", zone="водоохранная зона",
                                    land_use=props.get("tsn_ru", ""),

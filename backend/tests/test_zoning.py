@@ -36,6 +36,21 @@ def test_verdict_restricted_in_water_zone(monkeypatch):
     assert "водоохран" in v.zone.lower()
 
 
+# Водоохранная фича возвращена WFS по bbox, но её полигон точку НЕ накрывает
+# (крупная зона: bounding box перекрывает запрос, но участок вне зоны).
+_WATER_FAR = {"features": [{
+    "geometry": {"type": "Polygon", "coordinates": [[
+        [77.000, 43.300], [77.002, 43.300], [77.002, 43.302], [77.000, 43.302], [77.000, 43.300]]]},
+    "properties": {}}]}
+
+
+def test_verdict_allowed_when_water_feature_near_but_not_containing(monkeypatch):
+    _fake_wfs(monkeypatch, {"openmap:land_plots": _PLOT,
+                            "geonode:almaty_waterprotectionzone": _WATER_FAR})
+    v = get_zoning_provider().check(*ALMATY, object_type="Жилой дом", city="Алматы")
+    assert v.status == "allowed"  # точка вне водоохранного полигона → не ограничено
+
+
 def test_verdict_unknown_when_no_plot(monkeypatch):
     _fake_wfs(monkeypatch, {})
     v = get_zoning_provider().check(*ALMATY, object_type="Жилой дом")
