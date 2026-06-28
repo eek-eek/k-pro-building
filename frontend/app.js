@@ -910,6 +910,11 @@ async function viewSettings() {
           <div class="field"><label>Модель</label><select id="model"></select></div>
         </div>
         <div class="checks"><label><input type="checkbox" id="useSearch" ${s.use_search ? "checked" : ""}> Искать актуальные нормы РК (web-grounding)</label></div>
+        <div class="checks"><label><input type="checkbox" id="crossCheck" ${s.cross_check_enabled ? "checked" : ""}> Кросс-проверка норм вторым ИИ (ансамбль) — дороже: 2 вызова</label></div>
+        <div class="field"><label>Проверяющий провайдер</label>
+          <select id="crossProvider">${["gemini", "anthropic", "openai"].map((p) =>
+            `<option value="${p}" ${p === s.cross_check_provider ? "selected" : ""}>${p}</option>`).join("")}</select>
+          <div class="hint">Должен отличаться от основного, иначе проверка не выполнится.</div></div>
         <div class="row-actions">
           <button class="btn primary" id="saveSettings">Сохранить</button>
           <button class="btn" id="testConn">Проверить соединение</button>
@@ -959,6 +964,8 @@ async function viewSettings() {
       provider,
       model: modelSel.value || undefined,
       use_search: document.getElementById("useSearch").checked,
+      cross_check_enabled: document.getElementById("crossCheck").checked,
+      cross_check_provider: document.getElementById("crossProvider").value || undefined,
     };
     const key = apiKeyEl.value.trim();
     if (key) body.api_key = key;   // шлём только реальный новый ключ (никогда masked)
