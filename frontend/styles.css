@@ -91,7 +91,7 @@ h1.title { font-size: 44px; font-weight: 700; letter-spacing: -1px; line-height:
 .field { margin-bottom: 14px; }
 .field label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
-input[type=text], input[type=number], input:not([type]), select, textarea {
+input[type=text], input[type=number], input[type=password], input:not([type]), select, textarea {
   width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px;
   border: 1px solid var(--line-2); border-radius: var(--radius);
   padding: 9px 12px; background: var(--surface); color: var(--text); outline: none;
@@ -350,3 +350,21 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
   overflow: hidden; margin: 12px 0; background: var(--bg); cursor: grab; }
 .massing:active { cursor: grabbing; }
 .massing canvas { display: block; }
+
+/* ── Главная ── */
+.home .subtitle { max-width: 720px; }
+.home-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin: 26px 0; }
+.home-card { display: block; text-decoration: none; color: inherit; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 18px;
+  transition: border-color .12s, transform .12s, box-shadow .12s; }
+.home-card:hover { border-color: var(--accent); transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(0,0,0,.06); }
+.home-card .hc-ico { font-size: 30px; }
+.home-card h3 { margin: 10px 0 6px; font-size: 18px; font-weight: 700; }
+.home-card p { color: var(--text-2); font-size: 14px; line-height: 1.55; margin: 0 0 14px; }
+.home-card .hc-link { color: var(--accent); font-weight: 600; font-size: 14px; }
+.home-steps { color: var(--text-2); font-size: 14px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
+.home-steps span { font-weight: 700; color: var(--text); margin-right: 8px; }
+.home-steps b { color: var(--accent); font-family: var(--mono); }
+@media (max-width: 720px) { .home-cards { grid-template-columns: 1fr; } }
