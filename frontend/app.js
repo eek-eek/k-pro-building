@@ -60,9 +60,9 @@ const Api = {
   getObject: (id) => api("GET", `/objects/${id}`),
   patchObject: (id, patch) => api("PATCH", `/objects/${id}`, patch),
   deleteObject: (id) => api("DELETE", `/objects/${id}`),
-  objectConcept: (id, object_type, floors) =>
+  objectConcept: (id, object_type, floors, form) =>
     api("GET", `/objects/${id}/concept?object_type=${encodeURIComponent(object_type)}` +
-      (floors ? `&floors=${floors}` : "")),
+      (floors ? `&floors=${floors}` : "") + (form ? `&form=${encodeURIComponent(form)}` : "")),
   objectCreateEstimate: (id, input) => api("POST", `/objects/${id}/estimate`, input),
   checkZone: (id) => api("POST", `/objects/${id}/check-zone`),
   zoningWms: (city) => api("GET", `/zoning/wms?city=${encodeURIComponent(city)}`),
@@ -1062,10 +1062,12 @@ function renderZone(id, o) {
 
 async function renderConcept(id, city) {
   const box = document.getElementById("conceptBox");
+  const formOpts = BUILDING_FORMS.map((f) => `<option value="${f.key}">${f.label}</option>`).join("");
   box.innerHTML = `<div class="concept-panel"><h3>Концепт здания</h3>
     <div class="obj-form">
       <div class="field"><label>Тип объекта</label><select id="cType">
         <option>Жилой дом</option><option>Общественное здание</option><option>Промышленное здание</option></select></div>
+      <div class="field"><label>Форма</label><select id="cForm">${formOpts}</select></div>
       <button class="btn" id="cReload">Предложить</button>
     </div>
     <div id="cFields" class="hint">Нажмите «Предложить», чтобы система рассчитала параметры под участок.</div>
@@ -1079,10 +1081,12 @@ async function renderConcept(id, city) {
     renderMassing(document.getElementById("massing"), {
       length: get("building_length"), width: get("building_width"),
       floors: get("floors"), floor_height: (concept && concept.floor_height) || 3,
+      form: document.getElementById("cForm").value,
     });
   };
   const load = async () => {
-    concept = await Api.objectConcept(id, document.getElementById("cType").value);
+    concept = await Api.objectConcept(id, document.getElementById("cType").value, null,
+      document.getElementById("cForm").value);
     document.getElementById("cFields").innerHTML = `<div class="grid">
       ${cField("Этажность", "floors", concept.floors)}
       ${cField("Габарит длина, м", "building_length", concept.building_length)}
@@ -1096,6 +1100,8 @@ async function renderConcept(id, city) {
     drawMassing();
   };
   document.getElementById("cReload").addEventListener("click", load);
+  // смена формы — перезапрос концепта (форма меняет площадь) + перерисовка макета
+  document.getElementById("cForm").addEventListener("change", load);
   document.getElementById("cToEstimate").addEventListener("click", async () => {
     document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
       concept[el.dataset.ck] = Number(el.value || 0);
@@ -1112,10 +1118,84 @@ function cField(label, key, val) {
 }
 
 // ── 3D-макет здания (массинг) на Three.js ──
+// Ключи форм синхронны с backend app/calc/forms.py
+const BUILDING_FORMS = [
+  { key: "box", label: "Брусок" },
+  { key: "tower", label: "Башня" },
+  { key: "court", label: "L / П-двор" },
+  { key: "stepped", label: "Ступенчатое / крыша" },
+  { key: "dome", label: "Купол (hi-fi)" },
+];
+
 let _massing = null;  // активный рендер-цикл, чтобы переиспользовать/гасить
 
 function disposeMassing() {
   if (_massing) { try { _massing.dispose(); } catch (e) { /* ignore */ } _massing = null; }
+}
+
+// один прямоугольный корпус: стены + рёбра + линии этажей (как полосы окон)
+function _massBlock(T, group, mats, b) {
+  const geo = new T.BoxGeometry(b.w, b.h, b.d);
+  const m = new T.Mesh(geo, mats.wall);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.set(b.x0 || 0, b.y0 + b.h / 2, b.z0 || 0);
+  group.add(m);
+  const e = new T.LineSegments(new T.EdgesGeometry(geo), mats.edge);
+  e.position.copy(m.position); group.add(e);
+  const fl = Math.max(1, Math.round(b.floors || (b.h / (b.fh || 3))));
+  const x = b.x0 || 0, z = b.z0 || 0, w = b.w / 2, d = b.d / 2;
+  for (let i = 1; i < fl; i++) {
+    const y = b.y0 + i * (b.h / fl);
+    const pts = [new T.Vector3(x - w, y, z - d), new T.Vector3(x + w, y, z - d),
+      new T.Vector3(x + w, y, z + d), new T.Vector3(x - w, y, z + d), new T.Vector3(x - w, y, z - d)];
+    group.add(new T.Line(new T.BufferGeometry().setFromPoints(pts), mats.floor));
+  }
+}
+
+// строим группу здания нужной формы; возвращаем {group, height}
+function buildBuilding(T, form, L, D, n, fh) {
+  const g = new T.Group();
+  const mats = {
+    wall: new T.MeshStandardMaterial({ color: 0x9DB4D4, roughness: 0.62, metalness: 0.05 }),
+    edge: new T.LineBasicMaterial({ color: 0x2C5BA8 }),
+    floor: new T.LineBasicMaterial({ color: 0x2C5BA8, transparent: true, opacity: 0.28 }),
+  };
+  const Ht = n * fh;
+  if (form === "tower") {
+    _massBlock(T, g, mats, { w: L * 0.78, d: D * 0.78, h: Ht, y0: 0, floors: n, fh });
+    return { group: g, height: Ht };
+  }
+  if (form === "stepped") {
+    const hp = Ht / 3, fp = Math.max(1, Math.round(n / 3));
+    [[1.0, 0], [0.72, 1], [0.48, 2]].forEach(([s, i]) =>
+      _massBlock(T, g, mats, { w: L * s, d: D * s, h: hp, y0: i * hp, floors: fp, fh }));
+    return { group: g, height: Ht };
+  }
+  if (form === "court") {
+    const t = Math.min(L, D) * 0.28;           // толщина корпуса
+    const ox = (L - t) / 2, oz = (D - t) / 2;
+    _massBlock(T, g, mats, { w: L, d: t, h: Ht, y0: 0, z0: -oz, floors: n, fh });
+    _massBlock(T, g, mats, { w: L, d: t, h: Ht, y0: 0, z0: oz, floors: n, fh });
+    _massBlock(T, g, mats, { w: t, d: D - 2 * t, h: Ht, y0: 0, x0: -ox, floors: n, fh });
+    _massBlock(T, g, mats, { w: t, d: D - 2 * t, h: Ht, y0: 0, x0: ox, floors: n, fh });
+    return { group: g, height: Ht };
+  }
+  if (form === "dome") {
+    const r = Math.min(L, D) / 2, bodyH = Ht * 0.82;
+    const ringMat = new T.MeshBasicMaterial({ color: 0x2C5BA8 });
+    const cyl = new T.Mesh(new T.CylinderGeometry(r, r, bodyH, 48), mats.wall);
+    cyl.position.y = bodyH / 2; cyl.castShadow = true; cyl.receiveShadow = true; g.add(cyl);
+    for (let i = 1; i < n; i++) {                // кольца-этажи
+      const ring = new T.Mesh(new T.TorusGeometry(r * 1.002, r * 0.01, 8, 48), ringMat);
+      ring.position.y = i * (bodyH / n); ring.rotation.x = Math.PI / 2; g.add(ring);
+    }
+    const dome = new T.Mesh(new T.SphereGeometry(r, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), mats.wall);
+    dome.position.y = bodyH; dome.castShadow = true; g.add(dome);
+    return { group: g, height: bodyH + r };
+  }
+  // box (по умолчанию)
+  _massBlock(T, g, mats, { w: L, d: D, h: Ht, y0: 0, floors: n, fh });
+  return { group: g, height: Ht };
 }
 
 function renderMassing(container, dims) {
@@ -1126,71 +1206,60 @@ function renderMassing(container, dims) {
   const L = Math.max(1, dims.length || 1), D = Math.max(1, dims.width || 1);
   const n = Math.max(1, Math.round(dims.floors || 1));
   const fh = dims.floor_height || 3;
-  const Ht = n * fh;
 
   const scene = new T.Scene();
-  scene.background = new T.Color(0xF4F3EF);
+  scene.background = new T.Color(0xEFEEEA);
   const camera = new T.PerspectiveCamera(45, W / H, 0.1, 100000);
   const renderer = new T.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
   renderer.setSize(W, H);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = T.PCFSoftShadowMap;
   container.innerHTML = "";
   container.appendChild(renderer.domElement);
 
-  // здание (коробка), стоит на земле: y от 0 до Ht
-  const geo = new T.BoxGeometry(L, Ht, D);
-  const box = new T.Mesh(geo, new T.MeshLambertMaterial({ color: 0x9DB4D4, transparent: true, opacity: 0.92 }));
-  box.position.y = Ht / 2;
-  scene.add(box);
-  const edges = new T.LineSegments(new T.EdgesGeometry(geo), new T.LineBasicMaterial({ color: 0x2C5BA8 }));
-  edges.position.y = Ht / 2;
-  scene.add(edges);
+  const built = buildBuilding(T, dims.form || "box", L, D, n, fh);
+  scene.add(built.group);
+  const height = built.height;
+  const maxDim = Math.max(L, D, height);
 
-  // линии этажей
-  const floorMat = new T.LineBasicMaterial({ color: 0x2C5BA8, transparent: true, opacity: 0.3 });
-  for (let i = 1; i < n; i++) {
-    const y = i * fh;
-    const pts = [
-      new T.Vector3(-L / 2, y, -D / 2), new T.Vector3(L / 2, y, -D / 2),
-      new T.Vector3(L / 2, y, D / 2), new T.Vector3(-L / 2, y, D / 2), new T.Vector3(-L / 2, y, -D / 2),
-    ];
-    scene.add(new T.Line(new T.BufferGeometry().setFromPoints(pts), floorMat));
-  }
+  // площадка-участок (принимает тень)
+  const pad = new T.Mesh(new T.PlaneGeometry(maxDim * 2.4, maxDim * 2.4),
+    new T.MeshStandardMaterial({ color: 0xE2E0DA, roughness: 1 }));
+  pad.rotation.x = -Math.PI / 2; pad.receiveShadow = true; scene.add(pad);
 
-  // площадка-участок под зданием
-  const pad = new T.Mesh(new T.PlaneGeometry(L * 1.7, D * 1.7),
-    new T.MeshLambertMaterial({ color: 0xE7E5DF, side: T.DoubleSide }));
-  pad.rotation.x = -Math.PI / 2;
-  scene.add(pad);
+  // свет: небо-земля + солнце с мягкой тенью
+  scene.add(new T.HemisphereLight(0xffffff, 0xb9b6ad, 0.85));
+  const sun = new T.DirectionalLight(0xffffff, 0.75);
+  sun.position.set(maxDim * 0.8, maxDim * 1.7, maxDim * 0.9);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  const sc = sun.shadow.camera;
+  sc.left = -maxDim; sc.right = maxDim; sc.top = maxDim; sc.bottom = -maxDim;
+  sc.near = 0.5; sc.far = maxDim * 6; sc.updateProjectionMatrix();
+  scene.add(sun);
 
-  scene.add(new T.AmbientLight(0xffffff, 0.8));
-  const dir = new T.DirectionalLight(0xffffff, 0.55);
-  dir.position.set(1, 2, 1.5);
-  scene.add(dir);
-
-  const maxDim = Math.max(L, D, Ht);
-  camera.position.set(maxDim * 1.4, maxDim * 1.15, maxDim * 1.7);
-  camera.lookAt(0, Ht / 2, 0);
+  camera.position.set(maxDim * 1.5, maxDim * 1.15, maxDim * 1.85);
+  camera.lookAt(0, height / 2, 0);
 
   let controls = null;
   if (T.OrbitControls) {
     controls = new T.OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, Ht / 2, 0);
+    controls.target.set(0, height / 2, 0);
     controls.enablePan = false;
     controls.minDistance = maxDim * 0.7;
     controls.maxDistance = maxDim * 5;
     controls.autoRotate = true;
-    controls.autoRotateSpeed = 1.2;
+    controls.autoRotateSpeed = 1.1;
     controls.update();
   }
 
   let raf = 0;
   const animate = () => {
-    // самоочистка: ушли со страницы → гасим цикл
     if (!document.body.contains(renderer.domElement)) { disposeMassing(); return; }
     raf = requestAnimationFrame(animate);
     if (controls) controls.update();
-    else { scene.rotation.y += 0.005; }
+    else { built.group.rotation.y += 0.005; }
     renderer.render(scene, camera);
   };
   animate();

@@ -594,13 +594,14 @@ def _object_dims(obj: BuildingObject) -> tuple[float, float]:
 
 @router.get("/objects/{object_id}/concept")
 def object_concept(object_id: int, object_type: str = "Жилой дом",
-                   floors: int | None = None, db: Session = Depends(get_db)) -> dict:
+                   floors: int | None = None, form: str = "box",
+                   db: Session = Depends(get_db)) -> dict:
     obj = db.get(BuildingObject, object_id)
     if obj is None:
         raise HTTPException(status_code=404, detail="object not found")
     length, width = _object_dims(obj)
     inp = propose_concept(obj.area_m2 or (length * width), length, width,
-                          obj.city, object_type, floors)
+                          obj.city, object_type, floors, form)
     inp.project_name = obj.name or "Смета"
     return to_jsonable(inp)
 
