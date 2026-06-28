@@ -18,6 +18,7 @@ class BuildingInput(BaseModel):
     building_length: float = 50.0  # м
     building_width: float = 20.0  # м
     floor_height: float = 3.0  # м
+    form: str = "box"  # форма здания: box|tower|court|stepped|dome (влияет на застройку/фасад)
     structure_type: str = "Монолитный железобетон"
     foundation_type: str = "Плита"
     finish_level: str = "Черновая"
