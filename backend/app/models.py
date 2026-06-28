@@ -247,3 +247,29 @@ class Unit(Base):
     title: Mapped[str] = mapped_column(String(64), default="")
     dimension: Mapped[str] = mapped_column(String(16))  # labor_time|machine_time|mass|volume|area|count|length|set
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class WorkResource(Base):
+    """Ресурсный состав работы (вынос COMPOSITIONS в БД, с провенансом)."""
+
+    __tablename__ = "work_resources"
+    __table_args__ = (
+        UniqueConstraint("work_key", "code", "region", "price_level",
+                         name="uq_work_resource"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    work_key: Mapped[str] = mapped_column(String(64), index=True)
+    code: Mapped[str] = mapped_column(String(64))
+    official_code: Mapped[str] = mapped_column(String(64), default="")  # код ЕРЕР/ССЦ (Phase 2)
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(16))  # material|labor|machine
+    unit: Mapped[str] = mapped_column(String(16))
+    consumption: Mapped[float] = mapped_column(Float)
+    rank: Mapped[str] = mapped_column(String(16), default="")  # разряд (для labor)
+    price: Mapped[float] = mapped_column(Float, default=0.0)
+    source: Mapped[str] = mapped_column(String(16), default="seed")  # seed|ndcs|erer|ssc|manual
+    price_level: Mapped[str] = mapped_column(String(48), default="")
+    region: Mapped[str] = mapped_column(String(64), default="KZ")
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

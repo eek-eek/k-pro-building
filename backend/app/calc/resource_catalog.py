@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from ..schemas import ResourceLine
 
 
@@ -166,3 +169,36 @@ def snapshot_for(work_key: str) -> list[ResourceLine]:
                      consumption=s.consumption, price=s.price)
         for s in specs
     ]
+
+
+SEED_PRICE_LEVEL = "рынок-Астана-2026"
+
+
+def seed_work_resources(db: Session, region: str = "KZ") -> None:
+    """Идемпотентно засеять ресурсный каталог из COMPOSITIONS в БД с провенансом.
+
+    needs_review выставляется, если единица не проходит валидацию kind↔единица —
+    чтобы навести порядок в человеко-часах/машино-часах/материалах.
+    """
+    from ..models import WorkResource
+    from .units import unit_ok_for_kind
+
+    for work_key, specs in COMPOSITIONS.items():
+        for s in specs:
+            exists = db.scalar(
+                select(WorkResource).where(
+                    WorkResource.work_key == work_key,
+                    WorkResource.code == s.code,
+                    WorkResource.region == region,
+                    WorkResource.price_level == SEED_PRICE_LEVEL,
+                )
+            )
+            if exists:
+                continue
+            db.add(WorkResource(
+                work_key=work_key, code=s.code, name=s.name, kind=s.kind,
+                unit=s.unit, consumption=s.consumption, price=s.price,
+                source="seed", price_level=SEED_PRICE_LEVEL, region=region,
+                needs_review=not unit_ok_for_kind(s.unit, s.kind),
+            ))
+    db.commit()
