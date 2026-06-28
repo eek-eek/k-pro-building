@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..llm.base import LLMUnavailable
 from ..models import KnowledgeCache, NormDocument, NormRule
-from ..schemas import BuildingInput, NormParam, NormProfile, NormSource
+from ..schemas import BuildingInput, CrossCheck, NormParam, NormProfile, NormSource
 from . import extractor
 from .defaults import resolve_defaults
 from .registry import documents_for
@@ -217,6 +217,22 @@ def _persist_llm_rules(
     db.commit()
 
 
+def _cache_usable(eff, cached: Optional[NormProfile], demo_mode: bool) -> bool:
+    """Кэш годен, если он есть и не требует перепрогона кросс-проверки.
+
+    Перепрогон нужен, только если ансамбль ВКЛючён, режим реальный (не demo — там
+    LLM/кросс-проверки нет вовсе) и профиль был собран при ВЫКЛюченной проверке
+    (`cross_check.enabled is False`). Если проверка была включена, но не отработала
+    (нет ключа/провайдер упал — `enabled=True, ran=False`), кэш считаем годным,
+    чтобы не перестраивать профиль на каждый расчёт (причина уже в сводке)."""
+    if cached is None:
+        return False
+    if (not demo_mode and eff.cross_check_enabled
+            and (cached.cross_check is None or not cached.cross_check.enabled)):
+        return False
+    return True
+
+
 def resolve_norm_profile(
     db: Session, inp: BuildingInput, progress: ProgressFn | None = None,
     force: bool = False,
@@ -225,8 +241,11 @@ def resolve_norm_profile(
 
     force=True пропускает кэш и заново обращается к LLM (нужно для «Проверить нормы»:
     подпись не зависит от demo_mode/ключа, иначе вернётся старый неподтверждённый профиль)."""
+    from ..settings_service import get_effective_settings
+
     progress = progress or _noop
     signature = inp.signature()
+    eff = get_effective_settings(db)
 
     # force: всегда пересобираем мимо кэша (нужно для «Проверить нормы» —
     # иначе вернётся старый неподтверждённый профиль из кэша).
@@ -236,7 +255,7 @@ def resolve_norm_profile(
     # 1. Кэш (быстрый путь без блокировки)
     progress("norms_cache", "Поиск нормативного профиля в БД")
     cached = _cache_get(db, signature)
-    if cached is not None:
+    if _cache_usable(eff, cached, inp.demo_mode):
         progress("norms_cache", "Профиль найден в БД (без обращения к LLM)")
         return cached
 
@@ -244,7 +263,7 @@ def resolve_norm_profile(
     # остальные дожидаются и берут результат из кэша (без дублей LLM-вызовов).
     with _lock_for(signature):
         cached = _cache_get(db, signature)
-        if cached is not None:
+        if _cache_usable(eff, cached, inp.demo_mode):
             progress("norms_cache", "Профиль найден в БД (без обращения к LLM)")
             return cached
         return _build_profile(db, inp, signature, progress)
@@ -277,10 +296,13 @@ def _build_profile(
         params[cat] = _better(params.get(cat, p), p) if cat in params else p
 
     # 5. LLM-извлечение (если не demo и провайдер доступен)
+    cc = CrossCheck(enabled=False)
     if not inp.demo_mode:
         progress("norms_llm", "Извлечение норм через LLM по системному промпту РК")
         try:
             llm_params, llm_sources, web_links = extractor.extract_params(db, inp, documents)
+            # ансамбль: независимая кросс-проверка вторым ИИ (аннотирует llm_params)
+            llm_params, cc = extractor.cross_check_params(db, inp, documents, llm_params)
             for cat, p in llm_params.items():
                 params[cat] = _better(params.get(cat, p), p) if cat in params else p
             _persist_llm_rules(db, inp, llm_params, docs_by_code)
@@ -315,6 +337,7 @@ def _build_profile(
         params=params,
         sources=sources,
         from_cache=False,
+        cross_check=cc,
     )
 
     # 6. Кэшируем собранный профиль

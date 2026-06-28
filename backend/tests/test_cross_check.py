@@ -1,10 +1,19 @@
 """Кросс-проверка норм вторым провайдером (ансамбль) — через monkeypatch фабрики."""
 from __future__ import annotations
 
+import pytest
+
 import app.llm.factory as factory
 from app.norms.extractor import cross_check_params
 from app.schemas import BuildingInput, NormParam
 from app.settings_service import save_settings
+
+
+@pytest.fixture(autouse=True)
+def _reset_cross_check(db):
+    """Не протекать настройкой кросс-проверки в другие тесты (общая сессия БД)."""
+    yield
+    save_settings(db, {"cross_check_enabled": False})
 
 
 class _Fake:
@@ -99,3 +108,19 @@ def test_unreadable_verifier_degrades(db, monkeypatch):
     params, cc = cross_check_params(db, _inp(), [], _primary())
     assert cc.ran is False and "нечитаемый" in cc.reason
     assert "не дала значение" not in params["rebar_kg_per_m3"].note  # без ложного missing
+
+
+def test_resolver_attaches_cross_check(db, monkeypatch):
+    import app.norms.extractor as extractor
+    from app.norms import resolve_norm_profile
+    _enable(db)
+    monkeypatch.setattr(extractor, "extract_params",
+                        lambda d, i, docs: ({"rebar_kg_per_m3": NormParam(
+                            category="rebar_kg_per_m3", value=100, unit="кг/м³",
+                            source="llm", confidence=0.6)}, [], []))
+    monkeypatch.setattr(factory, "build_named_provider",
+                        lambda eff, name: _Fake([{"category": "rebar_kg_per_m3", "value": 105, "unit": "кг/м³"}]))
+    inp = BuildingInput(object_type="Жилой дом", demo_mode=False, use_search=False)
+    prof = resolve_norm_profile(db, inp, force=True)  # мимо кэша
+    assert prof.cross_check is not None and prof.cross_check.ran is True
+    assert prof.cross_check.agreed >= 1
