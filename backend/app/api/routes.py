@@ -14,6 +14,7 @@ from ..calc import (
     build_estimate, recompute_estimate,
     applicable_recommendations, build_recommendation_line,
 )
+from ..auth import require_admin
 from ..chat import run_chat_edit, ChatUnavailable, ChatEditError
 from ..concept import propose_concept
 from ..database import get_db
@@ -367,9 +368,10 @@ def suggest_material_prices(estimate_id: int, body: SuggestPricesRequest,
             if r.kind == "material" and r.code not in seen:
                 seen.add(r.code)
                 codes.append(r.code)
-    quotes = get_price_source(body.source).quote_materials(codes)
+    quotes = get_price_source(body.source).quote_materials(codes, est.city)
     return {
         "source": body.source,
+        "city": est.city,
         "suggestions": {c: {"price": q.price, "source": q.source, "note": q.note}
                         for c, q in quotes.items()},
     }
@@ -443,6 +445,8 @@ def post_chat(estimate_id: int, body: ChatPost, db: Session = Depends(get_db)) -
 
 @router.get("/settings")
 def get_settings_api(db: Session = Depends(get_db)) -> dict:
+    # GET открыт намеренно: ключ маскирован, а провайдер нужен чату/навбару.
+    # Запись настроек и промпты — под require_admin.
     eff = get_effective_settings(db)
     return {
         "provider": eff.llm_provider,
@@ -455,7 +459,8 @@ def get_settings_api(db: Session = Depends(get_db)) -> dict:
 
 
 @router.put("/settings")
-def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db)) -> dict:
+def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db),
+                     _a: None = Depends(require_admin)) -> dict:
     eff = get_effective_settings(db)
     provider = (body.provider or eff.llm_provider).lower()
     updates: dict = {}
@@ -473,20 +478,22 @@ def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db)) -> dic
 
 
 @router.post("/settings/test")
-def test_connection_api(body: TestConnectionRequest, db: Session = Depends(get_db)) -> dict:
+def test_connection_api(body: TestConnectionRequest, db: Session = Depends(get_db),
+                        _a: None = Depends(require_admin)) -> dict:
     ok, message = run_test_provider(db, body.provider, body.api_key, body.model)
     return {"ok": ok, "message": message}
 
 
 @router.get("/prompts")
-def list_prompts(db: Session = Depends(get_db)) -> list[dict]:
+def list_prompts(db: Session = Depends(get_db), _a: None = Depends(require_admin)) -> list[dict]:
     rows = db.scalars(select(Prompt).order_by(Prompt.key)).all()
     return [{"key": p.key, "title": p.title, "description": p.description,
              "body": p.body, "is_custom": p.is_custom} for p in rows]
 
 
 @router.put("/prompts/{key}")
-def update_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db)) -> dict:
+def update_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db),
+                  _a: None = Depends(require_admin)) -> dict:
     row = db.scalar(select(Prompt).where(Prompt.key == key))
     if row is None:
         raise HTTPException(status_code=404, detail="prompt not found")
@@ -497,7 +504,7 @@ def update_prompt(key: str, body: PromptUpdate, db: Session = Depends(get_db)) -
 
 
 @router.post("/prompts/{key}/reset")
-def reset_prompt(key: str, db: Session = Depends(get_db)) -> dict:
+def reset_prompt(key: str, db: Session = Depends(get_db), _a: None = Depends(require_admin)) -> dict:
     row = db.scalar(select(Prompt).where(Prompt.key == key))
     if row is None:
         raise HTTPException(status_code=404, detail="prompt not found")

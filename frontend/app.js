@@ -28,8 +28,11 @@ function toast(message, isError = false) {
 }
 
 // ───────────────────────── api ─────────────────────────
+let ADMIN_AUTH = sessionStorage.getItem("adminAuth") || null; // base64(login:pароль) для Настроек
+
 async function api(method, path, body) {
   const opts = { method, headers: {} };
+  if (ADMIN_AUTH) opts.headers["Authorization"] = "Basic " + ADMIN_AUTH;
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -152,12 +155,14 @@ function parseRoute() {
   const mo = h.match(/^\/object\/(\d+)/);
   if (mo) return { name: "object", id: Number(mo[1]) };
   if (h.startsWith("/objects")) return { name: "objects" };
+  if (h.startsWith("/estimates")) return { name: "estimates" };
   if (h.startsWith("/settings")) return { name: "settings" };
-  return { name: "dashboard" };
+  return { name: "home" };
 }
 function setActiveNav(route) {
-  const target = route.name === "settings" ? "#/settings"
-    : (route.name === "objects" || route.name === "object") ? "#/objects" : "#/";
+  const map = { home: "#/", estimates: "#/estimates", detail: "#/estimates",
+    objects: "#/objects", object: "#/objects", settings: "#/settings" };
+  const target = map[route.name] || "#/";
   document.querySelectorAll(".nav a.link").forEach((a) =>
     a.classList.toggle("active", a.dataset.nav === target));
 }
@@ -169,7 +174,8 @@ async function render() {
     else if (route.name === "settings") await viewSettings();
     else if (route.name === "objects") await viewObjects();
     else if (route.name === "object") await viewObject(route.id);
-    else await viewDashboard();
+    else if (route.name === "estimates") await viewDashboard();
+    else await viewHome();
   } catch (e) {
     APP().innerHTML = `<div class="page"><div class="empty">Ошибка: ${escapeHtml(e.detail || e.message || e)}</div></div>`;
   }
@@ -178,11 +184,41 @@ async function render() {
 window.addEventListener("hashchange", render);
 
 async function refreshNavProvider() {
+  const el = document.getElementById("navProvider");
+  if (!el) return;
   try {
-    const s = await Api.getSettings();
-    document.getElementById("navProvider").textContent =
-      "Провайдер: " + s.provider + (s.has_key || s.provider === "demo" ? "" : " (нет ключа)");
-  } catch (e) { /* ignore */ }
+    const s = await Api.getSettings();   // GET открыт (маскированный)
+    el.textContent = "Провайдер: " + s.provider + (s.has_key || s.provider === "demo" ? "" : " (нет ключа)");
+  } catch (e) { el.textContent = ""; }
+}
+
+// ───────────────────────── home ─────────────────────────
+async function viewHome() {
+  APP().innerHTML = `
+    <div class="page home">
+      <h1 class="title">Yale Building Calculator</h1>
+      <p class="subtitle">Предварительная (ориентировочная) смета строительства по нормам РК:
+        задаёте параметры объекта — система считает объёмы, ресурсы и стоимость с разделами,
+        накладными, резервом и НДС.</p>
+      <div class="home-cards">
+        <a class="home-card" href="#/estimates">
+          <div class="hc-ico">📄</div>
+          <h3>Просто смета</h3>
+          <p>Создайте смету напрямую: габариты, этажность, форма и класс отделки — и расчёт готов.</p>
+          <span class="hc-link">Перейти к сметам →</span>
+        </a>
+        <a class="home-card" href="#/objects">
+          <div class="hc-ico">📍</div>
+          <h3>Через объект</h3>
+          <p>Подберите участок на карте, проверьте его по кадастру/генплану, постройте концепт
+            здания — смета сформируется и привяжется к объекту.</p>
+          <span class="hc-link">Перейти к объектам →</span>
+        </a>
+      </div>
+      <div class="home-steps"><span>Как это работает:</span>
+        <b>1.</b> объект или параметры → <b>2.</b> концепт и форма здания →
+        <b>3.</b> ресурсная смета → <b>4.</b> экспорт в Word.</div>
+    </div>`;
 }
 
 // ───────────────────────── dashboard ─────────────────────────
@@ -259,7 +295,7 @@ async function viewDetail(id) {
 
   APP().innerHTML = `
     <div class="page">
-      <div class="breadcrumb"><a href="#/">Сметы</a> / ${escapeHtml(data.estimate.name)}</div>
+      <div class="breadcrumb"><a href="#/estimates">Сметы</a> / ${escapeHtml(data.estimate.name)}</div>
       <div class="title-row">
         <input class="title-edit" id="titleEdit" value="${escapeAttr(data.estimate.name)}">
         ${statusBadge(calculated ? "calculated" : "draft")}
@@ -281,6 +317,7 @@ async function viewDetail(id) {
               </div>
             </div>
           </details>
+          ${calculated ? `<div class="card"><h3>Макет здания</h3><div id="smetaMassing" class="massing"></div></div>` : ""}
           <div id="result"></div>
         </div>
         <div class="right" id="chatPanel"></div>
@@ -299,6 +336,11 @@ async function viewDetail(id) {
     renderResult(cv.result);
     buildVersionSelector(id);
     document.getElementById("exportBtn").addEventListener("click", () => exportDocx(cv.result));
+    // 3D-макет здания по входным данным сметы
+    ensureThree().then(() => renderMassing(document.getElementById("smetaMassing"), {
+      length: inp.building_length, width: inp.building_width,
+      floors: inp.floors, floor_height: inp.floor_height, form: inp.form || "box",
+    }));
   }
   renderChat(id, calculated);
 }
@@ -639,6 +681,26 @@ async function buildVersionSelector(id) {
 }
 
 // ── chat ──
+// Подгоняем высоту чат-панели под видимую область, чтобы поле ввода всегда было
+// видно (sticky-панель при скролле «прилипает», JS держит её в пределах экрана).
+let _chatFitBound = false;
+function fitChatPanel() {
+  const el = document.getElementById("chatPanel");
+  if (!el) return;
+  const top = el.getBoundingClientRect().top;
+  const h = Math.min(window.innerHeight - top - 12, window.innerHeight - 72);
+  el.style.height = Math.max(320, h) + "px";
+}
+function bindChatFit() {
+  fitChatPanel();
+  if (_chatFitBound) return;
+  _chatFitBound = true;
+  let raf = 0;
+  const onScroll = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; fitChatPanel(); }); };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
+}
+
 async function renderChat(id, calculated) {
   const panel = document.getElementById("chatPanel");
   let settings = null;
@@ -655,6 +717,7 @@ async function renderChat(id, calculated) {
           <button class="btn accent send" id="chatSend">↑</button></div></div>`}`;
   const body = document.getElementById("chatBody");
   body.scrollTop = body.scrollHeight;
+  bindChatFit();
   if (calculated && usable) {
     const send = async () => {
       const inputEl = document.getElementById("chatInput");
@@ -759,9 +822,49 @@ function exportDocx(r) {
 }
 
 // ───────────────────────── settings ─────────────────────────
+function renderSettingsLogin(msg) {
+  APP().innerHTML = `
+    <div class="page settings" style="max-width:420px">
+      <h1 class="title">Настройки</h1>
+      <p class="subtitle">Раздел защищён — войдите, чтобы продолжить.</p>
+      ${msg ? `<div class="zone-warn">${escapeHtml(msg)}</div>` : ""}
+      <div class="card">
+        <div class="field"><label>Логин</label><input id="loginUser" type="text" value="admin"></div>
+        <div class="field"><label>Пароль</label><input id="loginPass" type="password" placeholder="пароль"></div>
+        <div class="row-actions"><button class="btn accent" id="loginBtn">Войти</button></div>
+      </div>
+    </div>`;
+  const doLogin = async () => {
+    const u = document.getElementById("loginUser").value;
+    const p = document.getElementById("loginPass").value;
+    ADMIN_AUTH = btoa(unescape(encodeURIComponent(u + ":" + p)));   // utf-8-safe base64
+    try {
+      await Api.listPrompts();                 // проверка по защищённому эндпоинту
+      sessionStorage.setItem("adminAuth", ADMIN_AUTH);
+      toast("Вход выполнен");
+      viewSettings();
+    } catch (e) {
+      ADMIN_AUTH = null;
+      toast("Неверный логин или пароль", true);
+    }
+  };
+  document.getElementById("loginBtn").addEventListener("click", doLogin);
+  document.getElementById("loginPass").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+}
+
 async function viewSettings() {
-  const s = await Api.getSettings();
-  const prompts = await Api.listPrompts();
+  if (!ADMIN_AUTH) return renderSettingsLogin();
+  let s, prompts;
+  try {
+    s = await Api.getSettings();
+    prompts = await Api.listPrompts();
+  } catch (e) {
+    if (e.status === 401) {
+      ADMIN_AUTH = null; sessionStorage.removeItem("adminAuth");
+      return renderSettingsLogin("Сессия не подтверждена — войдите снова.");
+    }
+    throw e;
+  }
   let provider = s.provider;
   const modelsFor = (p) => (s.catalog[p] || []);
   APP().innerHTML = `
@@ -860,7 +963,7 @@ function promptBlock(p) {
 }
 
 // ───────────────────────── objects (SP1) ─────────────────────────
-const CITY_CENTER = { "Алматы": [43.238, 76.889], "Астана": [51.128, 71.430] };
+const CITY_CENTER = { "Алматы": [43.238, 76.889], "Астана": [51.128, 71.430], "Шымкент": [42.317, 69.587] };
 
 // Leaflet подключён через <script defer>, а app.js исполняется раньше него.
 // При прямом заходе/обновлении на #/objects карта рендерится до загрузки L —
@@ -899,7 +1002,7 @@ async function viewObjects() {
     <div class="page">
       <div class="page-head"><h1 class="title">Объекты</h1>
         <select id="citySel" class="ver-select" style="margin-left:auto;width:160px">
-          <option>Алматы</option><option>Астана</option></select></div>
+          <option>Алматы</option><option>Астана</option><option>Шымкент</option></select></div>
       <div class="subtitle">Нарисуйте контур участка на карте (инструмент «прямоугольник»), затем создайте объект.</div>
       <div id="map" class="map"></div>
       <div id="objForm"></div>
@@ -932,7 +1035,7 @@ function renderObjForm() {
   if (!DRAWN) { el.innerHTML = `<div class="hint">Участок ещё не нарисован.</div>`; return; }
   el.innerHTML = `<div class="obj-form">
     <div class="field"><label>Название</label><input id="objName" type="text" value="Новый объект"></div>
-    <div class="field"><label>Город</label><select id="objCity"><option>Алматы</option><option>Астана</option></select></div>
+    <div class="field"><label>Город</label><select id="objCity"><option>Алматы</option><option>Астана</option><option>Шымкент</option></select></div>
     <button class="btn primary" id="objSave">Создать объект</button>
     <span class="hint">центр: ${DRAWN.lat.toFixed(5)}, ${DRAWN.lon.toFixed(5)}</span></div>`;
   document.getElementById("objCity").value = document.getElementById("citySel").value;
@@ -1022,7 +1125,7 @@ async function viewObject(id) {
     r.addEventListener("click", () => { location.hash = `#/estimate/${r.dataset.eid}`; }));
 
   renderZone(id, o);
-  await renderConcept(id, o.city);
+  await renderConcept(id, o.city, data.estimates);
 }
 
 function zoneBadge(status) {
@@ -1060,10 +1163,13 @@ function renderZone(id, o) {
   });
 }
 
-async function renderConcept(id, city) {
+async function renderConcept(id, city, estimates) {
   const box = document.getElementById("conceptBox");
+  const has = estimates && estimates.length ? estimates[0] : null;
   const formOpts = BUILDING_FORMS.map((f) => `<option value="${f.key}">${f.label}</option>`).join("");
   box.innerHTML = `<div class="concept-panel"><h3>Концепт здания</h3>
+    ${has ? `<div class="zone-warn">Для объекта уже создана смета «${escapeHtml(has.name)}» (№${has.id}).
+      <a href="#/estimate/${has.id}">Открыть</a> — повторное создание заблокировано.</div>` : ""}
     <div class="obj-form">
       <div class="field"><label>Тип объекта</label><select id="cType">
         <option>Жилой дом</option><option>Общественное здание</option><option>Промышленное здание</option></select></div>
@@ -1085,30 +1191,46 @@ async function renderConcept(id, city) {
     });
   };
   const load = async () => {
-    concept = await Api.objectConcept(id, document.getElementById("cType").value, null,
-      document.getElementById("cForm").value);
-    document.getElementById("cFields").innerHTML = `<div class="grid">
-      ${cField("Этажность", "floors", concept.floors)}
-      ${cField("Габарит длина, м", "building_length", concept.building_length)}
-      ${cField("Габарит ширина, м", "building_width", concept.building_width)}
-      ${cField("Общая площадь, м²", "total_area", concept.total_area)}
-    </div>`;
-    document.getElementById("cToEstimate").disabled = false;
-    // живое обновление 3D-макета при правке габарита/этажности
-    document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
-      el.addEventListener("input", () => drawMassing()));
-    drawMassing();
+    try {
+      concept = await Api.objectConcept(id, document.getElementById("cType").value, null,
+        document.getElementById("cForm").value);
+      document.getElementById("cFields").innerHTML = `<div class="grid">
+        ${cField("Этажность", "floors", concept.floors)}
+        ${cField("Габарит длина, м", "building_length", concept.building_length)}
+        ${cField("Габарит ширина, м", "building_width", concept.building_width)}
+        ${cField("Общая площадь, м²", "total_area", concept.total_area)}
+      </div>`;
+      document.getElementById("cToEstimate").disabled = !!has;
+      // живое обновление 3D-макета при правке габарита/этажности
+      document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
+        el.addEventListener("input", () => drawMassing()));
+      drawMassing();
+    } catch (e) {
+      document.getElementById("cFields").innerHTML =
+        `<div class="zone-warn">Не удалось рассчитать концепт: ${escapeHtml(e.detail || e.message || e)}</div>`;
+      toast("Ошибка концепта: " + (e.detail || "см. сообщение"), true);
+    }
   };
   document.getElementById("cReload").addEventListener("click", load);
   // смена формы — перезапрос концепта (форма меняет площадь) + перерисовка макета
   document.getElementById("cForm").addEventListener("change", load);
   document.getElementById("cToEstimate").addEventListener("click", async () => {
+    // одна смета на объект: если уже есть — предложить перейти, не плодить дубли
+    if (has) {
+      if (confirm(`У объекта уже есть смета «${has.name}» (№${has.id}). Перейти к ней?`))
+        location.hash = `#/estimate/${has.id}`;
+      return;
+    }
     document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
       concept[el.dataset.ck] = Number(el.value || 0);
     });
-    const { estimate_id } = await Api.objectCreateEstimate(id, concept);
-    toast("Смета создана из концепта");
-    location.hash = `#/estimate/${estimate_id}`;
+    try {
+      const { estimate_id } = await Api.objectCreateEstimate(id, concept);
+      toast("Смета создана из концепта");
+      location.hash = `#/estimate/${estimate_id}`;
+    } catch (e) {
+      toast("Не удалось создать смету: " + (e.detail || ""), true);
+    }
   });
   await load();
 }

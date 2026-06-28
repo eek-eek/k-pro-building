@@ -17,7 +17,8 @@ def curated_material_prices() -> dict[str, float]:
 class CuratedSource:
     name = "curated"
 
-    def quote_materials(self, codes: list[str]) -> dict[str, PriceQuote]:
+    def quote_materials(self, codes: list[str], city: str | None = None) -> dict[str, PriceQuote]:
+        # Курируемые цены национальные — город не влияет (параметр для общего контракта).
         prices = curated_material_prices()
         return {
             c: PriceQuote(code=c, price=prices[c], source="curated", note="курируемая цена РК")

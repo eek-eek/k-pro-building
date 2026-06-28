@@ -21,6 +21,15 @@ SATU_CATEGORIES: dict[str, str] = {
     "xps": "https://satu.kz/Ekstrudirovannyj-penopolistirol.html",
 }
 
+# Город сметы → регион Satu (cps-region-id). Пусто = национальная выдача.
+# Статичный HTML Satu region-id точно не подтверждён → пока национально + город в
+# подписи; при появлении проверенных id выдача сузится до города (Алматы→Алматы).
+SATU_CITY_REGION: dict[str, str] = {
+    "Алматы": "",
+    "Астана": "",
+    "Шымкент": "",
+}
+
 _PRICE_RE = re.compile(r"(\d[\d\s ]{2,})\s*(?:₸|тг|тенге)", re.IGNORECASE)
 
 # Доверяем Satu только при достаточной выборке после фильтра шума; иначе откат на
@@ -51,29 +60,35 @@ class SatuSource:
 
     def _http_fetch(self, url: str) -> str:
         import urllib.request
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (compatible; SmetaBot/1.0)"})
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; SmetaBot/1.0)"}
+        region = getattr(self, "_region", None)
+        if region:                       # ограничить выдачу регионом города (Satu cookie)
+            headers["Cookie"] = f"cps-region-id={region}"
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.read().decode("utf-8", "ignore")
 
-    def quote_materials(self, codes: list[str]) -> dict[str, PriceQuote]:
-        curated = self._curated.quote_materials(codes)
+    def quote_materials(self, codes: list[str], city: str | None = None) -> dict[str, PriceQuote]:
+        curated = self._curated.quote_materials(codes, city)
         out: dict[str, PriceQuote] = {}
+        city_label = city or "РК"
+        self._region = SATU_CITY_REGION.get(city or "")   # None = национально
         for c in codes:
             anchor = curated[c].price if c in curated else None
             url = SATU_CATEGORIES.get(c)
             quote: Optional[PriceQuote] = None
             if url and anchor:
                 try:
-                    html = self._cache.get(url)
+                    key = f"{city or '*'}|{url}"            # кэш отдельно по городу
+                    html = self._cache.get(key)
                     if html is None:
                         html = self._fetch(url)
-                        self._cache[url] = html
+                        self._cache[key] = html
                     prices = [p for p in parse_prices(html) if 0.2 * anchor <= p <= 5 * anchor]
                     if len(prices) >= MIN_SAMPLES:
                         med = round(statistics.median(prices))
                         quote = PriceQuote(code=c, price=med, source="satu",
-                                           note=f"медиана {len(prices)} предложений Satu (розница)")
+                                           note=f"медиана {len(prices)} предложений Satu, {city_label} (розница)")
                 except Exception:
                     quote = None
             if quote is None and c in curated:
