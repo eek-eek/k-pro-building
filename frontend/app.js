@@ -873,6 +873,15 @@ function ensureLeaflet() {
   });
 }
 
+// Three.js (3D-макет) подключён через <script defer> — ждём его перед использованием.
+function ensureThree() {
+  return new Promise((resolve) => {
+    const ready = () => window.THREE && window.THREE.WebGLRenderer;
+    if (ready()) return resolve();
+    const t = setInterval(() => { if (ready()) { clearInterval(t); resolve(); } }, 30);
+  });
+}
+
 function baseLayers() {
   const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     { maxZoom: 19, attribution: "© OpenStreetMap" });
@@ -1060,9 +1069,18 @@ async function renderConcept(id, city) {
       <button class="btn" id="cReload">Предложить</button>
     </div>
     <div id="cFields" class="hint">Нажмите «Предложить», чтобы система рассчитала параметры под участок.</div>
+    <div id="massing" class="massing"></div>
     <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
   </div>`;
   let concept = null;
+  const drawMassing = async () => {
+    await ensureThree();
+    const get = (k) => Number((document.querySelector(`#cFields [data-ck="${k}"]`) || {}).value || 0);
+    renderMassing(document.getElementById("massing"), {
+      length: get("building_length"), width: get("building_width"),
+      floors: get("floors"), floor_height: (concept && concept.floor_height) || 3,
+    });
+  };
   const load = async () => {
     concept = await Api.objectConcept(id, document.getElementById("cType").value);
     document.getElementById("cFields").innerHTML = `<div class="grid">
@@ -1072,6 +1090,10 @@ async function renderConcept(id, city) {
       ${cField("Общая площадь, м²", "total_area", concept.total_area)}
     </div>`;
     document.getElementById("cToEstimate").disabled = false;
+    // живое обновление 3D-макета при правке габарита/этажности
+    document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
+      el.addEventListener("input", () => drawMassing()));
+    drawMassing();
   };
   document.getElementById("cReload").addEventListener("click", load);
   document.getElementById("cToEstimate").addEventListener("click", async () => {
@@ -1087,6 +1109,107 @@ async function renderConcept(id, city) {
 function cField(label, key, val) {
   return `<div class="field"><label>${label}</label>
     <input type="number" step="0.1" data-ck="${key}" value="${escapeAttr(val)}"></div>`;
+}
+
+// ── 3D-макет здания (массинг) на Three.js ──
+let _massing = null;  // активный рендер-цикл, чтобы переиспользовать/гасить
+
+function disposeMassing() {
+  if (_massing) { try { _massing.dispose(); } catch (e) { /* ignore */ } _massing = null; }
+}
+
+function renderMassing(container, dims) {
+  if (!container || !window.THREE) return;
+  disposeMassing();
+  const T = window.THREE;
+  const W = container.clientWidth || 360, H = container.clientHeight || 240;
+  const L = Math.max(1, dims.length || 1), D = Math.max(1, dims.width || 1);
+  const n = Math.max(1, Math.round(dims.floors || 1));
+  const fh = dims.floor_height || 3;
+  const Ht = n * fh;
+
+  const scene = new T.Scene();
+  scene.background = new T.Color(0xF4F3EF);
+  const camera = new T.PerspectiveCamera(45, W / H, 0.1, 100000);
+  const renderer = new T.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(W, H);
+  container.innerHTML = "";
+  container.appendChild(renderer.domElement);
+
+  // здание (коробка), стоит на земле: y от 0 до Ht
+  const geo = new T.BoxGeometry(L, Ht, D);
+  const box = new T.Mesh(geo, new T.MeshLambertMaterial({ color: 0x9DB4D4, transparent: true, opacity: 0.92 }));
+  box.position.y = Ht / 2;
+  scene.add(box);
+  const edges = new T.LineSegments(new T.EdgesGeometry(geo), new T.LineBasicMaterial({ color: 0x2C5BA8 }));
+  edges.position.y = Ht / 2;
+  scene.add(edges);
+
+  // линии этажей
+  const floorMat = new T.LineBasicMaterial({ color: 0x2C5BA8, transparent: true, opacity: 0.3 });
+  for (let i = 1; i < n; i++) {
+    const y = i * fh;
+    const pts = [
+      new T.Vector3(-L / 2, y, -D / 2), new T.Vector3(L / 2, y, -D / 2),
+      new T.Vector3(L / 2, y, D / 2), new T.Vector3(-L / 2, y, D / 2), new T.Vector3(-L / 2, y, -D / 2),
+    ];
+    scene.add(new T.Line(new T.BufferGeometry().setFromPoints(pts), floorMat));
+  }
+
+  // площадка-участок под зданием
+  const pad = new T.Mesh(new T.PlaneGeometry(L * 1.7, D * 1.7),
+    new T.MeshLambertMaterial({ color: 0xE7E5DF, side: T.DoubleSide }));
+  pad.rotation.x = -Math.PI / 2;
+  scene.add(pad);
+
+  scene.add(new T.AmbientLight(0xffffff, 0.8));
+  const dir = new T.DirectionalLight(0xffffff, 0.55);
+  dir.position.set(1, 2, 1.5);
+  scene.add(dir);
+
+  const maxDim = Math.max(L, D, Ht);
+  camera.position.set(maxDim * 1.4, maxDim * 1.15, maxDim * 1.7);
+  camera.lookAt(0, Ht / 2, 0);
+
+  let controls = null;
+  if (T.OrbitControls) {
+    controls = new T.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, Ht / 2, 0);
+    controls.enablePan = false;
+    controls.minDistance = maxDim * 0.7;
+    controls.maxDistance = maxDim * 5;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 1.2;
+    controls.update();
+  }
+
+  let raf = 0;
+  const animate = () => {
+    // самоочистка: ушли со страницы → гасим цикл
+    if (!document.body.contains(renderer.domElement)) { disposeMassing(); return; }
+    raf = requestAnimationFrame(animate);
+    if (controls) controls.update();
+    else { scene.rotation.y += 0.005; }
+    renderer.render(scene, camera);
+  };
+  animate();
+
+  const onResize = () => {
+    const w = container.clientWidth || W, h = container.clientHeight || H;
+    camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+  };
+  window.addEventListener("resize", onResize);
+
+  _massing = {
+    dispose() {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+      if (controls) controls.dispose();
+      renderer.dispose();
+      if (renderer.domElement && renderer.domElement.parentNode) renderer.domElement.remove();
+    },
+  };
 }
 
 // ───────────────────────── init ─────────────────────────

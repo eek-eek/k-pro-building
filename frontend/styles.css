@@ -344,3 +344,9 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 .zone-line { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .zone-warn { color: var(--warn); background: var(--warn-bg); border-radius: var(--radius);
   padding: 8px 12px; font-size: 13px; margin: 6px 0; }
+
+/* ── 3D-макет здания (массинг) ── */
+.massing { height: 240px; width: 100%; border: 1px solid var(--line); border-radius: 12px;
+  overflow: hidden; margin: 12px 0; background: var(--bg); cursor: grab; }
+.massing:active { cursor: grabbing; }
+.massing canvas { display: block; }
