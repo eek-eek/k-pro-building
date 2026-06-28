@@ -296,6 +296,8 @@ def _build_profile(
         params[cat] = _better(params.get(cat, p), p) if cat in params else p
 
     # 5. LLM-извлечение (если не demo и провайдер доступен)
+    from ..settings_service import get_effective_settings
+    eff = get_effective_settings(db)
     cc = CrossCheck(enabled=False)
     if not inp.demo_mode:
         progress("norms_llm", "Извлечение норм через LLM по системному промпту РК")
@@ -327,6 +329,11 @@ def _build_profile(
                 )
             progress("norms_llm", f"Извлечено коэффициентов: {len(llm_params)}")
         except LLMUnavailable as exc:
+            # Ансамбль был запрошен, но основной LLM упал — фиксируем это в профиле,
+            # иначе кэш с cross_check.enabled=False будет перестраиваться на каждый
+            # расчёт (повторные платные попытки). reason — без тела ответа провайдера.
+            if eff.cross_check_enabled:
+                cc = CrossCheck(enabled=True, ran=False, reason="основной LLM недоступен")
             progress("norms_llm", f"LLM недоступен ({exc}); расчёт по дефолтам РК")
     else:
         progress("norms_llm", "Демо-режим: нормы по дефолтам без LLM")

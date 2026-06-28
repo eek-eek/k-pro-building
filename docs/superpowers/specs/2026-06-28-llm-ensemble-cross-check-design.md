@@ -70,14 +70,15 @@
 ### 6. Интеграция в резолвер (`backend/app/norms/resolver.py`, `_build_profile`)
 Профиль создаётся ПОЗЖЕ блока LLM. Поэтому:
 - Перед/в начале блока завести `cc = CrossCheck(enabled=False)` (локальная).
-- Внутри `try`, **после** `_persist_llm_rules(db, inp, llm_params, docs_by_code)`:
+- Внутри `try`, порядок: `extract_params` → **`cross_check_params`** (аннотирует `llm_params`) → мёрдж в `params` через `_better` → **`_persist_llm_rules`**:
   ```
+  llm_params, llm_sources, web_links = extractor.extract_params(db, inp, documents)
   llm_params, cc = extractor.cross_check_params(db, inp, documents, llm_params)
-  # переобъединить уточнённые llm_params в общий params тем же _better-циклом:
   for cat, p in llm_params.items():
       params[cat] = _better(params.get(cat, p), p) if cat in params else p
+  _persist_llm_rules(db, inp, llm_params, docs_by_code)
   ```
-  (Передаём именно `llm_params`, НЕ merged `params`; повторный мёрдж — через `_better`, не `params.update`, чтобы не затереть более авторитетные document/seed-правила.)
+  _(Реализация ставит кросс-проверку **до** `_persist_llm_rules` — так в сохранённые `NormRule` попадают уже уточнённые `confidence`/ноты «✓ подтверждено»/«⚠ расхождение», что полезно для повторного использования правил.)_ Передаём именно `llm_params`, НЕ merged `params`; повторный мёрдж — через `_better`, не `params.update`, чтобы не затереть более авторитетные document/seed-правила.
 - При создании `profile = NormProfile(..., cross_check=cc)` — добавить аргумент `cross_check=cc`.
 - В ветке `except LLMUnavailable` / при `inp.demo_mode` кросс-проверку НЕ вызывать (там `llm_params` нет / LLM недоступен) — `cc` остаётся `enabled=False`.
 
@@ -97,7 +98,7 @@ elif profile.cross_check and profile.cross_check.enabled and not profile.cross_c
 
 ## Кэширование (честный нюанс + инвалидация)
 Профиль кэшируется по `signature` (от `BuildingInput.discriminators()`), который **не включает** `cross_check_enabled`/`cross_check_provider`. Поэтому без доработки включение тумблера после расчёта с выключенным вернуло бы из кэша старый профиль без проверки. Чтобы «при каждом расчёте» не врало:
-- В `resolve_norm_profile`, на быстром cache-hit и на double-check под локом: если `eff.cross_check_enabled` И (`cached.cross_check is None` ИЛИ `not cached.cross_check.ran`) → **не отдавать кэш**, уйти в `_build_profile` (там кросс-проверка отработает и перезапишет кэш профилем с `cross_check`). После того как кросс-проверенный профиль закэширован, повторные расчёты того же объекта берут его из кэша (с `cross_check.ran=True`) без нового LLM-вызова.
+- В `resolve_norm_profile`, на быстром cache-hit и на double-check под локом: если `not demo_mode` И `eff.cross_check_enabled` И (`cached.cross_check is None` ИЛИ `not cached.cross_check.enabled`) → **не отдавать кэш**, уйти в `_build_profile`. _(Реализация: условие по **`enabled`**, не по `ran`, плюс guard `not demo_mode`. Так профиль, собранный при включённом ансамбле но без отработавшей проверки — нет ключа/провайдер упал, `enabled=True, ran=False` — считается годным и НЕ перестраивается на каждый расчёт; иначе был бы бесконечный платный перепрогон. Demo-режим кросс-проверку не делает вовсе → его кэш не инвалидируется.)_ Чтобы это работало и когда **основной** LLM упал, `_build_profile` в ветке `except LLMUnavailable` при включённом тумблере выставляет `cc = CrossCheck(enabled=True, ran=False, reason="основной LLM недоступен")`. После того как профиль закэширован, повторные расчёты берут его из кэша без нового LLM-вызова.
 - `force=True` («Проверить нормы») всегда идёт мимо кэша → кросс-проверка гарантированно отработает.
 - Резолверу нужен доступ к `eff` — читать `get_effective_settings(db)` один раз в начале (как уже делается косвенно). Альтернатива (не выбрана): добавить признак в signature — отвергнуто, т.к. signature участвует и в сопоставлении правил.
 

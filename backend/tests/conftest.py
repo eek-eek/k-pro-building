@@ -35,3 +35,16 @@ def db():
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_cross_check_settings():
+    """Не давать настройке кросс-проверки протекать между тестами (общая сессия БД):
+    иначе включённый где-то тумблер делал бы сьют зависимым от порядка сбора."""
+    yield
+    from app.settings_service import save_settings
+    s = SessionLocal()
+    try:
+        save_settings(s, {"cross_check_enabled": False, "cross_check_provider": "openai"})
+    finally:
+        s.close()

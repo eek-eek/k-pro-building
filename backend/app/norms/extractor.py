@@ -99,9 +99,14 @@ def extract_params(
 
 def _parse_params(data: dict) -> dict[str, NormParam]:
     """Разобрать data['params'] в нормы. Отбрасывает неизвестные категории и
-    невалидные значения (нечисловые / не конечные / отрицательные)."""
+    невалидные значения (нечисловые / не конечные / отрицательные). Устойчиво к
+    мусору от недоверенной модели (не-dict, нечисловой confidence) — не бросает."""
+    if not isinstance(data, dict):
+        return {}
     params: dict[str, NormParam] = {}
     for raw in data.get("params", []) or []:
+        if not isinstance(raw, dict):
+            continue
         cat = raw.get("category")
         if cat not in CATEGORY_META:
             continue
@@ -111,13 +116,20 @@ def _parse_params(data: dict) -> dict[str, NormParam]:
             continue
         if not math.isfinite(value) or value < 0:
             continue
+        try:
+            conf = float(raw.get("confidence", 0.6))
+        except (TypeError, ValueError):
+            conf = 0.6
+        if not math.isfinite(conf):
+            conf = 0.6
+        conf = min(max(conf, 0.0), 1.0)
         unit, _ = CATEGORY_META[cat]
         params[cat] = NormParam(
             category=cat,
             value=value,
             unit=raw.get("unit") or unit,
             source="llm",
-            confidence=float(raw.get("confidence", 0.6) or 0.6),
+            confidence=conf,
             document_code=raw.get("document_code"),
             note=(raw.get("note") or "")[:500],
             needs_review=bool(raw.get("needs_review", False)),
@@ -157,7 +169,7 @@ def cross_check_params(db, inp: BuildingInput, documents, primary_params):
                                           reason="основное LLM-извлечение пусто")
     if not eff.cross_check_enabled:
         return primary_params, CrossCheck(enabled=False)
-    if eff.cross_check_provider == eff.llm_provider:
+    if (eff.cross_check_provider or "").lower() == (eff.llm_provider or "").lower():
         return primary_params, CrossCheck(enabled=True, ran=False,
                                           reason="проверяющий совпадает с основным")
     verifier = build_named_provider(eff, eff.cross_check_provider)
@@ -168,7 +180,8 @@ def cross_check_params(db, inp: BuildingInput, documents, primary_params):
     user = build_user_prompt(inp, documents)
     system = get_prompt(db, "norm_extraction") or SYSTEM_PROMPT
     try:
-        data, _ = verifier.extract_json(system, user, use_search=eff.llm_use_search)
+        # тот же режим web-поиска, что у основного вызова — равные условия сравнения
+        data, _ = verifier.extract_json(system, user, use_search=inp.use_search)
     except LLMUnavailable:
         return primary_params, CrossCheck(enabled=True, ran=False,
                                           reason="ошибка проверяющего")

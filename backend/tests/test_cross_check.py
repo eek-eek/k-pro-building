@@ -136,3 +136,85 @@ def test_estimate_warning_from_cross_check(db):
                                   agreed=3, disputed=1)
     r = build_estimate(db, inp, prof)
     assert any("кросс-проверку (openai)" in w.lower() for w in r.warnings)
+
+
+def test_estimate_warns_enabled_not_ran(db):
+    from app.calc import build_estimate
+    from app.schemas import CrossCheck
+    from app.norms import resolve_norm_profile
+    inp = BuildingInput(demo_mode=True, use_search=False, object_type="Жилой дом")
+    prof = resolve_norm_profile(db, inp)
+    prof.cross_check = CrossCheck(enabled=True, ran=False, reason="проверяющий недоступен (нет ключа)")
+    r = build_estimate(db, inp, prof)
+    assert any("включена, но не выполнена" in w for w in r.warnings)
+
+
+def test_same_provider_skips(db, monkeypatch):
+    save_settings(db, {"llm_provider": "openai", "cross_check_enabled": True,
+                       "cross_check_provider": "openai"})
+    called = {"n": 0}
+    monkeypatch.setattr(factory, "build_named_provider",
+                        lambda eff, name: called.__setitem__("n", called["n"] + 1) or _Fake([]))
+    _, cc = cross_check_params(db, _inp(), [], _primary())
+    assert cc.ran is False and "совпадает" in cc.reason and called["n"] == 0
+
+
+def test_unavailable_verifier_degrades(db, monkeypatch):
+    _enable(db)
+
+    class _Down:
+        name = "openai"
+        available = False
+
+    monkeypatch.setattr(factory, "build_named_provider", lambda eff, name: _Down())
+    _, cc = cross_check_params(db, _inp(), [], _primary())
+    assert cc.ran is False and "нет ключа" in cc.reason
+
+
+def test_extra_keys_reported(db, monkeypatch):
+    _enable(db)
+    monkeypatch.setattr(factory, "build_named_provider",
+                        lambda eff, name: _Fake([
+                            {"category": "rebar_kg_per_m3", "value": 105, "unit": "кг/м³"},
+                            {"category": "frame_concrete_per_area", "value": 0.4, "unit": "м3/м2"}]))
+    _, cc = cross_check_params(db, _inp(), [], _primary())
+    assert cc.extra == 1 and "frame_concrete_per_area" in cc.extra_keys
+
+
+def test_cache_invalidated_when_toggle_turned_on_real_mode(db, monkeypatch):
+    import app.norms.extractor as extractor
+    from app.norms import resolve_norm_profile
+    monkeypatch.setattr(extractor, "extract_params",
+                        lambda d, i, docs: ({"rebar_kg_per_m3": NormParam(
+                            category="rebar_kg_per_m3", value=100, unit="кг/м³",
+                            source="llm", confidence=0.6)}, [], []))
+    monkeypatch.setattr(factory, "build_named_provider",
+                        lambda eff, name: _Fake([{"category": "rebar_kg_per_m3", "value": 105, "unit": "кг/м³"}]))
+    save_settings(db, {"cross_check_enabled": False, "llm_provider": "anthropic"})
+    inp = BuildingInput(object_type="Автомойка", structure_type="Металлокаркас",
+                        demo_mode=False, use_search=False)
+    first = resolve_norm_profile(db, inp)
+    assert first.cross_check.enabled is False
+    save_settings(db, {"cross_check_enabled": True, "cross_check_provider": "openai"})
+    second = resolve_norm_profile(db, inp)
+    assert second.from_cache is False and second.cross_check.ran is True
+
+
+def test_llm_unavailable_with_ensemble_does_not_loop(db, monkeypatch):
+    """Ансамбль включён, но основной LLM упал → профиль фиксирует enabled=True,
+    и кэш переиспользуется (нет бесконечного перебилда с платными вызовами)."""
+    import app.norms.extractor as extractor
+    from app.norms import resolve_norm_profile
+    from app.llm.base import LLMUnavailable
+
+    def _raise(*a, **k):
+        raise LLMUnavailable("нет ключа")
+
+    monkeypatch.setattr(extractor, "extract_params", _raise)
+    save_settings(db, {"cross_check_enabled": True, "llm_provider": "anthropic",
+                       "cross_check_provider": "openai"})
+    inp = BuildingInput(object_type="Элеватор", demo_mode=False, use_search=False)
+    first = resolve_norm_profile(db, inp)
+    assert first.cross_check.enabled is True and first.cross_check.ran is False
+    second = resolve_norm_profile(db, inp)
+    assert second.from_cache is True  # кэш переиспользован, без перебилда-в-цикле

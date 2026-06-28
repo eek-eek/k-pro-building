@@ -87,3 +87,16 @@ def test_parse_params_skips_unknown_and_bad_values():
 
 def test_parse_params_empty():
     assert extractor._parse_params({}) == {}
+
+
+def test_parse_params_bad_confidence_does_not_crash():
+    data = {"params": [
+        {"category": "rebar_kg_per_m3", "value": 100, "confidence": "high"},  # нечисловой
+    ]}
+    params = extractor._parse_params(data)
+    assert params["rebar_kg_per_m3"].confidence == 0.6  # дефолт, без падения
+
+
+def test_parse_params_non_dict_input():
+    assert extractor._parse_params(None) == {}
+    assert extractor._parse_params([1, 2]) == {}
