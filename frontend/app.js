@@ -89,7 +89,7 @@ const SELECTS = {
 };
 const DEFAULT_INPUT = {
   project_name: "Черновая смета объекта", city: "Астана / Казахстан", object_type: "Жилой дом",
-  floors: 5, total_area: 2500, building_length: 50, building_width: 20, floor_height: 3,
+  floors: 10, total_area: 1500, building_length: 10, building_width: 15, floor_height: 3,
   structure_type: "Монолитный железобетон", foundation_type: "Плита", finish_level: "Черновая",
   engineering_level: "Базовая", basement: false, parking: false, use_search: false, demo_mode: false,
   overhead_pct: 8, contingency_pct: 5, vat_pct: 12, works: [], assumptions: "",
@@ -1123,8 +1123,11 @@ const BUILDING_FORMS = [
   { key: "box", label: "Брусок" },
   { key: "tower", label: "Башня" },
   { key: "court", label: "L / П-двор" },
-  { key: "stepped", label: "Ступенчатое / крыша" },
+  { key: "stepped", label: "Ступенчатое" },
   { key: "dome", label: "Купол (hi-fi)" },
+  { key: "gable", label: "Дом со скатной крышей" },
+  { key: "podium", label: "Стилобат + башня" },
+  { key: "cylinder", label: "Цилиндр" },
 ];
 
 let _massing = null;  // активный рендер-цикл, чтобы переиспользовать/гасить
@@ -1152,6 +1155,29 @@ function _massBlock(T, group, mats, b) {
   }
 }
 
+// вальмовая (скатная) крыша L×D высотой h над уровнем baseY
+function _roofMesh(T, mat, L, D, baseY, h) {
+  const hx = L / 2, hz = D / 2, ay = baseY + h;
+  const v = [-hx, baseY, -hz, hx, baseY, -hz, hx, baseY, hz, -hx, baseY, hz, 0, ay, 0];
+  const geo = new T.BufferGeometry();
+  geo.setAttribute("position", new T.Float32BufferAttribute(v, 3));
+  geo.setIndex([0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4]);
+  geo.computeVertexNormals();
+  const m = new T.Mesh(geo, mat); m.castShadow = true;
+  return m;
+}
+
+// вертикальный цилиндр с кольцами-этажами (для «цилиндр»/тела купола)
+function _cylinder(T, g, mats, r, h, n) {
+  const cyl = new T.Mesh(new T.CylinderGeometry(r, r, h, 48), mats.wall);
+  cyl.position.y = h / 2; cyl.castShadow = true; cyl.receiveShadow = true; g.add(cyl);
+  const ringMat = new T.MeshBasicMaterial({ color: 0x2C5BA8 });
+  for (let i = 1; i < n; i++) {
+    const ring = new T.Mesh(new T.TorusGeometry(r * 1.002, r * 0.01, 8, 48), ringMat);
+    ring.position.y = i * (h / n); ring.rotation.x = Math.PI / 2; g.add(ring);
+  }
+}
+
 // строим группу здания нужной формы; возвращаем {group, height}
 function buildBuilding(T, form, L, D, n, fh) {
   const g = new T.Group();
@@ -1159,6 +1185,7 @@ function buildBuilding(T, form, L, D, n, fh) {
     wall: new T.MeshStandardMaterial({ color: 0x9DB4D4, roughness: 0.62, metalness: 0.05 }),
     edge: new T.LineBasicMaterial({ color: 0x2C5BA8 }),
     floor: new T.LineBasicMaterial({ color: 0x2C5BA8, transparent: true, opacity: 0.28 }),
+    roof: new T.MeshStandardMaterial({ color: 0x6E8CB8, roughness: 0.6, metalness: 0.05 }),
   };
   const Ht = n * fh;
   if (form === "tower") {
@@ -1182,16 +1209,27 @@ function buildBuilding(T, form, L, D, n, fh) {
   }
   if (form === "dome") {
     const r = Math.min(L, D) / 2, bodyH = Ht * 0.82;
-    const ringMat = new T.MeshBasicMaterial({ color: 0x2C5BA8 });
-    const cyl = new T.Mesh(new T.CylinderGeometry(r, r, bodyH, 48), mats.wall);
-    cyl.position.y = bodyH / 2; cyl.castShadow = true; cyl.receiveShadow = true; g.add(cyl);
-    for (let i = 1; i < n; i++) {                // кольца-этажи
-      const ring = new T.Mesh(new T.TorusGeometry(r * 1.002, r * 0.01, 8, 48), ringMat);
-      ring.position.y = i * (bodyH / n); ring.rotation.x = Math.PI / 2; g.add(ring);
-    }
+    _cylinder(T, g, mats, r, bodyH, n);
     const dome = new T.Mesh(new T.SphereGeometry(r, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), mats.wall);
     dome.position.y = bodyH; dome.castShadow = true; g.add(dome);
     return { group: g, height: bodyH + r };
+  }
+  if (form === "cylinder") {
+    const r = Math.min(L, D) / 2;
+    _cylinder(T, g, mats, r, Ht, n);
+    return { group: g, height: Ht };
+  }
+  if (form === "gable") {
+    _massBlock(T, g, mats, { w: L, d: D, h: Ht, y0: 0, floors: n, fh });
+    g.add(_roofMesh(T, mats.roof, L, D, Ht, Math.max(2, Math.min(L, D) * 0.45)));
+    return { group: g, height: Ht + Math.min(L, D) * 0.45 };
+  }
+  if (form === "podium") {
+    const podFloors = Math.max(1, Math.round(n * 0.3)), podH = podFloors * fh;
+    _massBlock(T, g, mats, { w: L, d: D, h: podH, y0: 0, floors: podFloors, fh });
+    const towF = Math.max(1, n - podFloors);
+    _massBlock(T, g, mats, { w: L * 0.55, d: D * 0.55, h: towF * fh, y0: podH, floors: towF, fh });
+    return { group: g, height: podH + towF * fh };
   }
   // box (по умолчанию)
   _massBlock(T, g, mats, { w: L, d: D, h: Ht, y0: 0, floors: n, fh });
