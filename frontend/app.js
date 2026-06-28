@@ -1367,14 +1367,23 @@ async function renderConcept(id, city, estimates) {
     <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
   </div>`;
   let concept = null;
-  // Общая площадь = габариты × коэф.формы × этажность (как в propose_concept).
-  // При активной ИИ-форме площадь считает сервер из массинга — поле не трогаем.
-  const recomputeTotal = () => {
-    const totalEl = document.querySelector('#cFields [data-ck="total_area"]');
-    if (!totalEl || (concept && Array.isArray(concept.massing) && concept.massing.length)) return;
+  // Физический максимум площади = габариты × коэф.формы × этажность (как в propose_concept).
+  const maxTotal = () => {
     const get = (k) => Number((document.querySelector(`#cFields [data-ck="${k}"]`) || {}).value || 0);
-    totalEl.value = Math.round(get("building_length") * get("building_width")
+    return Math.round(get("building_length") * get("building_width")
       * footprintFactor(document.getElementById("cForm").value) * get("floors"));
+  };
+  const totalField = () => document.querySelector('#cFields [data-ck="total_area"]');
+  const usingMassing = () => concept && Array.isArray(concept.massing) && concept.massing.length;
+  // Правка габаритов/формы/этажности → площадь = максимум (отражает форму).
+  const recomputeTotal = () => {
+    const el = totalField();
+    if (el && !usingMassing()) el.value = maxTotal();
+  };
+  // Ручная правка площади — можно занизить, но не выше максимума.
+  const clampTotal = () => {
+    const el = totalField();
+    if (el && !usingMassing() && Number(el.value || 0) > maxTotal()) el.value = maxTotal();
   };
   const drawMassing = async () => {
     await ensureThree();
@@ -1403,11 +1412,16 @@ async function renderConcept(id, city, estimates) {
       </div>`;
       document.getElementById("cToEstimate").disabled = !!has;
       document.getElementById("cGenForm").disabled = !!has;
-      // живое обновление площади и 3D-макета при правке габарита/этажности
-      document.querySelectorAll("#cFields [data-ck]").forEach((el) =>
-        el.addEventListener("input", () => { recomputeTotal(); drawMassing(); }));
+      // площадь: правка габаритов/этажности → максимум; ручная правка площади → зажать ≤ максимума
+      document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
+        if (el.dataset.ck === "total_area") {
+          el.addEventListener("input", clampTotal);
+        } else {
+          el.addEventListener("input", () => { recomputeTotal(); drawMassing(); });
+        }
+      });
       snapFloorsToInt(document.querySelector('#cFields [data-ck="floors"]'));
-      recomputeTotal();
+      clampTotal();   // на загрузке: если предложенная площадь выше максимума — поджать
       drawMassing();
     } catch (e) {
       document.getElementById("cFields").innerHTML =
@@ -1468,11 +1482,12 @@ async function renderConcept(id, city, estimates) {
   await load();
 }
 function cField(label, key, val) {
-  // total_area — производная (габариты × коэф.формы × этажность), только для чтения
+  // total_area — редактируема, но не выше физического максимума (габариты×форма×этажность);
+  // при правке габаритов/формы пересчитывается автоматически.
   if (key === "total_area")
     return `<div class="field"><label>${label}</label>
-      <input type="number" data-ck="${key}" value="${escapeAttr(val)}" readonly
-        title="считается автоматически из габаритов, формы и этажности"></div>`;
+      <input type="number" step="1" min="0" data-ck="${key}" value="${escapeAttr(val)}"
+        title="не больше габариты × форма × этажность; можно занизить вручную"></div>`;
   const attrs = key === "floors" ? `step="1" min="1"` : `step="0.1"`;  // этажи — целые
   return `<div class="field"><label>${label}</label>
     <input type="number" ${attrs} data-ck="${key}" value="${escapeAttr(val)}"></div>`;
