@@ -199,9 +199,10 @@ def build_estimate(
     # Укрупнённый ориентир РК (НДЦС/УСН) — сверка ресурсной сметы; не меняет итоги.
     cost_anchor = compute_cost_anchor(db, inp, totals.grand_total)
     if cost_anchor is not None and abs(cost_anchor.deviation_pct) > 25:
+        val_str = f"{cost_anchor.value:,.0f}".replace(",", " ")  # ru-формат (пробелы)
         warnings.append(
             f"Ресурсная смета отклоняется от укрупнённого ориентира РК на "
-            f"{cost_anchor.deviation_pct:+.0f}% (укрупнённо ≈ {cost_anchor.value:,.0f} ₸"
+            f"{cost_anchor.deviation_pct:+.0f}% (укрупнённо ≈ {val_str} ₸"
             + ("; предварительный показатель" if cost_anchor.provisional else "") + ")."
         )
 

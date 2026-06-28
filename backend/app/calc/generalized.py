@@ -53,13 +53,17 @@ def resolve_generalized_indicator(
 ) -> Optional[GeneralizedIndicator]:
     """Найти укрупнённый показатель под объект: регион города → KZ."""
     region = inp.city.split("/")[0].strip() or "KZ"
-    for reg in (region, "KZ"):
-        row = db.scalar(
-            select(GeneralizedIndicator).where(
+    for reg in dict.fromkeys((region, "KZ")):  # без повторного запроса при пустом регионе
+        row = db.scalars(
+            select(GeneralizedIndicator)
+            .where(
                 GeneralizedIndicator.object_type == inp.object_type,
                 GeneralizedIndicator.region == reg,
             )
-        )
+            # подтверждённые (needs_review=False) раньше предварительных; .first()
+            # вместо .scalar() — устойчиво к нескольким уровням цен (План 1C).
+            .order_by(GeneralizedIndicator.needs_review)
+        ).first()
         if row is not None:
             return row
     return None
