@@ -84,13 +84,14 @@ def test_works_filter_limits_sections(db):
 
 
 def test_works_filter_no_token_bleed(db):
-    """«Теплоизоляция наружных стен» не должна тянуть кладку и благоустройство."""
+    """«Теплоизоляция наружных стен» → конструктив «Фасадные работы», без утечки
+    в «Стены и перегородки» и «Благоустройство»."""
     inp = _input(works=["Теплоизоляция наружных стен"])
     profile = resolve_norm_profile(db, inp)
     r = build_estimate(db, inp, profile)
     sections = {ln.section for ln in r.lines}
-    assert any("теплоизоляц" in s.lower() for s in sections)  # раздел 5 включён
-    assert not any("Кладка" in s for s in sections)
+    assert any("Фасадные" in s for s in sections)  # теплоизоляция стен → Фасадные работы
+    assert not any("Стены и перегородки" in s for s in sections)
     assert not any("Благоустройство" in s for s in sections)
 
 
