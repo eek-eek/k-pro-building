@@ -81,7 +81,7 @@ const Api = {
   testConn: (b) => api("POST", "/settings/test", b),
   listBenchmark: () => api("GET", "/benchmark"),
   addBenchmark: (b) => api("POST", "/benchmark", b),
-  importBenchmark: (csv) => api("POST", "/benchmark/import", { csv }),
+  importBenchmark: (xlsx_b64) => api("POST", "/benchmark/import", { xlsx_b64 }),
   deleteBenchmark: (id) => api("DELETE", `/benchmark/${id}`),
   listPrompts: () => api("GET", "/prompts"),
   putPrompt: (key, body) => api("PUT", `/prompts/${key}`, { body }),
@@ -175,6 +175,7 @@ function parseRoute() {
   if (mo) return { name: "object", id: Number(mo[1]) };
   if (h.startsWith("/objects")) return { name: "objects" };
   if (h.startsWith("/estimates")) return { name: "estimates" };
+  if (h.startsWith("/prices")) return { name: "prices" };
   if (h.startsWith("/settings")) return { name: "settings" };
   return { name: "home" };
 }
@@ -191,6 +192,7 @@ async function render() {
   try {
     if (route.name === "detail") await viewDetail(route.id);
     else if (route.name === "settings") await viewSettings();
+    else if (route.name === "prices") await viewPrices();
     else if (route.name === "objects") await viewObjects();
     else if (route.name === "object") await viewObject(route.id);
     else if (route.name === "estimates") await viewDashboard();
@@ -1027,46 +1029,127 @@ function _xlEsc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").re
 function _xlGuard(s) { return /^[=+\-@]/.test(s) ? "'" + s : s; }  // защита от формул-инъекций
 function _xlCol(i) { let s = "", n = i + 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
-function exportXlsx(r) {
-  const t = r.totals || {};
-  const num = (v) => (Number(v) || 0);
-  const rowsXml = []; let rn = 0;
-  const cellS = (ci, v) => (v === "" || v == null) ? "" : `<c r="${_xlCol(ci)}${rn}" t="inlineStr"><is><t xml:space="preserve">${_xlEsc(_xlGuard(String(v)))}</t></is></c>`;
-  const cellN = (ci, v) => `<c r="${_xlCol(ci)}${rn}"><v>${num(v)}</v></c>`;
-  const row = (cells) => { rn++; rowsXml.push(`<row r="${rn}">${cells.map((c, i) => c.n ? cellN(i, c.v) : cellS(i, c.v)).join("")}</row>`); };
-  const S = (v) => ({ v }); const N = (v) => ({ v, n: true });
-
-  row([S(r.project_name)]);
-  row([S(`${r.object_type} · ${r.city} · ${r.precision_class} · ${r.generated_at}`)]);
-  row(["№", "Конструктив", "Работа / ресурс", "Норма", "Ед.", "Объём", "Материал", "Работа", "Машины", "Итого ₸", "Источник", "Дата цен"].map(S));
-  (r.lines || []).forEach((l) => {
-    row([S(l.no), S(l.section), S(l.title), S(l.norm), S(l.unit), N(l.quantity), N(l.material_price), N(l.labor_price), N(l.machine_price), N(l.total),
-      S((SRC_LABEL && SRC_LABEL[l.price_source]) || l.price_source || ""), S((l.price_date || "") + (l.price_stale ? " ≥6мес" : ""))]);
-    (l.resources || []).forEach((res) => {
-      const q = num(res.consumption) * num(l.quantity);
-      row([S(""), S(""), S(`${res.name} (${KIND_LABEL[res.kind] || res.kind})`), S(""), S(res.unit), N(q), N(res.price), S(""), S(""), N(Math.round(q * num(res.price))), S(res.source || ""), S(res.updated_at || "")]);
-    });
-  });
-  const totRow = (label, val) => row([S(label), S(""), S(""), S(""), S(""), S(""), S(""), S(""), S(""), N(val)]);
-  totRow("Прямые затраты", t.direct); totRow(`Накладные (${num(t.overhead_pct)}%)`, t.overhead);
-  totRow(`Резерв (${num(t.contingency_pct)}%)`, t.contingency); totRow(`НДС (${num(t.vat_pct)}%)`, t.vat);
-  totRow("ИТОГО с НДС", t.grand_total);
-
-  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml.join("")}</sheetData></worksheet>`;
+// rows: массив строк; ячейка — строка (текст) или {v, n:true} (число).
+function _xlsxBlob(rows) {
+  const cell = (ci, ri, c) => {
+    const ref = _xlCol(ci) + ri;
+    if (c && c.n) return `<c r="${ref}"><v>${Number(c.v) || 0}</v></c>`;
+    const v = (c && typeof c === "object") ? c.v : c;
+    return (v === "" || v == null) ? "" : `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${_xlEsc(_xlGuard(String(v)))}</t></is></c>`;
+  };
+  const sheetData = rows.map((cells, i) => `<row r="${i + 1}">${cells.map((c, ci) => cell(ci, i + 1, c)).join("")}</row>`).join("");
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetData}</sheetData></worksheet>`;
   const files = [
     { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>` },
     { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
-    { name: "xl/workbook.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Смета" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+    { name: "xl/workbook.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/></sheets></workbook>` },
     { name: "xl/_rels/workbook.xml.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>` },
     { name: "xl/worksheets/sheet1.xml", data: sheet },
   ];
-  const blob = new Blob([_zipStore(files)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  return new Blob([_zipStore(files)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+function _download(blob, name) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "smeta_" + (r.project_name || "obj").replace(/[^\wа-яё-]+/gi, "_").slice(0, 40) +
-    "_" + new Date().toISOString().slice(0, 10) + ".xlsx";
-  a.click();
-  URL.revokeObjectURL(a.href);
+  a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+function exportXlsx(r) {
+  const t = r.totals || {};
+  const num = (v) => (Number(v) || 0);
+  const S = (v) => ({ v }); const N = (v) => ({ v, n: true });
+  const rows = [];
+  rows.push([S(r.project_name)]);
+  rows.push([S(`${r.object_type} · ${r.city} · ${r.precision_class} · ${r.generated_at}`)]);
+  rows.push(["№", "Конструктив", "Работа / ресурс", "Норма", "Ед.", "Объём", "Материал", "Работа", "Машины", "Итого ₸", "Источник", "Дата цен"].map(S));
+  (r.lines || []).forEach((l) => {
+    rows.push([S(l.no), S(l.section), S(l.title), S(l.norm), S(l.unit), N(l.quantity), N(l.material_price), N(l.labor_price), N(l.machine_price), N(l.total),
+      S((SRC_LABEL && SRC_LABEL[l.price_source]) || l.price_source || ""), S((l.price_date || "") + (l.price_stale ? " ≥6мес" : ""))]);
+    (l.resources || []).forEach((res) => {
+      const q = num(res.consumption) * num(l.quantity);
+      rows.push([S(""), S(""), S(`${res.name} (${KIND_LABEL[res.kind] || res.kind})`), S(""), S(res.unit), N(q), N(res.price), S(""), S(""), N(Math.round(q * num(res.price))), S(res.source || ""), S(res.updated_at || "")]);
+    });
+  });
+  const tot = (label, val) => rows.push([S(label), S(""), S(""), S(""), S(""), S(""), S(""), S(""), S(""), N(val)]);
+  tot("Прямые затраты", t.direct); tot(`Накладные (${num(t.overhead_pct)}%)`, t.overhead);
+  tot(`Резерв (${num(t.contingency_pct)}%)`, t.contingency); tot(`НДС (${num(t.vat_pct)}%)`, t.vat);
+  tot("ИТОГО с НДС", t.grand_total);
+  _download(_xlsxBlob(rows), "smeta_" + (r.project_name || "obj").replace(/[^\wа-яё-]+/gi, "_").slice(0, 40) +
+    "_" + new Date().toISOString().slice(0, 10) + ".xlsx");
+}
+
+// Шаблон справочника цен (.xlsx): заголовки + примеры строк.
+function downloadPriceTemplate() {
+  const rows = [
+    ["work_key", "code", "name", "kind", "unit", "consumption", "price", "region"],
+    ["frame_concrete", "concrete_b25", "Бетон B25", "material", "м³", "1.02", "32000", "KZ"],
+    ["frame_concrete", "concreter", "Бетонщик", "labor", "чел-ч", "2.9", "3800", "KZ"],
+    ["roof", "membrane", "Кровельная мембрана", "material", "м²", "1.05", "9000", "KZ"],
+  ];
+  _download(_xlsxBlob(rows), "shablon_spravochnik_cen.xlsx");
+}
+
+// ───────────────────── справочник цен (бенчмаркинг) ─────────────────────
+async function viewPrices() {
+  let rows = [];
+  try { rows = await Api.listBenchmark(); } catch (e) { /* ignore */ }
+  APP().innerHTML = `
+    <div class="page">
+      <h1 class="title">Справочник цен (внутренний бенчмаркинг)</h1>
+      <p class="subtitle">Свои цены имеют приоритет над сидовыми/рыночными в расчёте — по ключу работы и коду ресурса. Частичный справочник переопределяет только свои позиции, остальной состав работы сохраняется.</p>
+      <div class="card">
+        <div class="row-actions" style="margin-bottom:10px">
+          <button class="btn" id="tplBtn">⬇ Скачать шаблон (.xlsx)</button>
+          <label class="btn accent" style="cursor:pointer">⬆ Загрузить .xlsx с ценами<input type="file" id="bmXlsx" accept=".xlsx" style="display:none"></label>
+        </div>
+        <div class="hint" style="margin-bottom:10px">Колонки: <b>work_key</b>, <b>code</b>, name, <b>kind</b> (material/labor/machine), <b>unit</b>, consumption, <b>price</b>, region. work_key — ключ работы (frame_concrete, roof, hvac …). Скачайте шаблон, заполните в Excel, загрузите обратно.</div>
+        <div id="bmList">${benchmarkRows(rows)}</div>
+      </div>
+      <details class="card"><summary>Добавить одну позицию вручную</summary>
+        <div class="grid bm-form" style="margin-top:10px">
+          <div class="field"><label>work_key</label><input id="bmWorkKey" placeholder="frame_concrete"></div>
+          <div class="field"><label>Код ресурса</label><input id="bmCode" placeholder="concrete_b25"></div>
+          <div class="field"><label>Название</label><input id="bmName" placeholder="Бетон B25"></div>
+          <div class="field"><label>Вид</label><select id="bmKind"><option value="material">материал</option><option value="labor">труд</option><option value="machine">машины</option></select></div>
+          <div class="field"><label>Ед.</label><input id="bmUnit" placeholder="м³"></div>
+          <div class="field"><label>Расход на ед.</label><input id="bmCons" type="number" step="0.01" value="1"></div>
+          <div class="field"><label>Цена, ₸</label><input id="bmPrice" type="number" step="1" value="0"></div>
+          <div class="field"><label>Регион</label><input id="bmRegion" value="KZ"></div>
+        </div>
+        <div class="row-actions"><button class="btn accent" id="bmAdd">Добавить в справочник</button></div>
+      </details>
+    </div>`;
+
+  document.getElementById("tplBtn").addEventListener("click", downloadPriceTemplate);
+  const bmXlsx = document.getElementById("bmXlsx");
+  bmXlsx.addEventListener("change", async () => {
+    const file = bmXlsx.files && bmXlsx.files[0];
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      const rep = await Api.importBenchmark(btoa(bin));
+      toast(`Загружено: +${rep.inserted}, обновлено ${rep.updated}, брак ${rep.skipped}`, rep.skipped > 0);
+      viewPrices();
+    } catch (e) { toast(e.detail || "Ошибка загрузки .xlsx", true); }
+  });
+  document.getElementById("bmAdd").addEventListener("click", async () => {
+    const g = (id) => (document.getElementById(id).value || "").trim();
+    const body = {
+      work_key: g("bmWorkKey"), code: g("bmCode"), name: g("bmName"),
+      kind: document.getElementById("bmKind").value, unit: g("bmUnit"),
+      consumption: Number(document.getElementById("bmCons").value || 1),
+      price: Number(document.getElementById("bmPrice").value || 0), region: g("bmRegion") || "KZ",
+    };
+    if (!body.work_key || !body.code || !body.unit) { toast("Заполните work_key, код и единицу", true); return; }
+    try { await Api.addBenchmark(body); toast("Добавлено в справочник"); viewPrices(); }
+    catch (e) { toast(e.detail || "Ошибка", true); }
+  });
+  document.querySelectorAll("[data-bm-del]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Удалить позицию из справочника?")) return;
+    try { await Api.deleteBenchmark(b.dataset.bmDel); toast("Удалено"); viewPrices(); }
+    catch (e) { toast(e.detail || "Ошибка", true); }
+  }));
 }
 
 // ───────────────────────── settings ─────────────────────────
@@ -1102,11 +1185,10 @@ function renderSettingsLogin(msg) {
 
 async function viewSettings() {
   if (!ADMIN_AUTH) return renderSettingsLogin();
-  let s, prompts, benchmark = [];
+  let s, prompts;
   try {
     s = await Api.getSettings();
     prompts = await Api.listPrompts();
-    try { benchmark = await Api.listBenchmark(); } catch (e) { /* ignore */ }
   } catch (e) {
     if (e.status === 401) {
       ADMIN_AUTH = null; sessionStorage.removeItem("adminAuth");
@@ -1145,28 +1227,6 @@ async function viewSettings() {
           <button class="btn" id="testConn">Проверить соединение</button>
           <span class="test-status" id="testStatus"></span>
         </div>
-      </div>
-
-      <div class="section-h">Внутренний справочник цен (бенчмаркинг)</div>
-      <div class="card">
-        <div class="hint" style="margin-bottom:8px">Свои цены имеют приоритет над сидовыми/рыночными в расчёте (по ключу работы + коду ресурса). work_key — как в расчёте (напр. frame_concrete, roof).</div>
-        <div id="bmList">${benchmarkRows(benchmark)}</div>
-        <div class="row-actions" style="margin:10px 0">
-          <label class="btn" style="cursor:pointer">Загрузить CSV-справочник<input type="file" id="bmCsv" accept=".csv,text/csv" style="display:none"></label>
-          <span class="fm-hint">Колонки: work_key,code,name,kind,unit,consumption,price[,region]. price_level/источник проставятся «бенчмарк».</span>
-        </div>
-        <div class="hint" style="margin:6px 0">Или добавить одну позицию вручную:</div>
-        <div class="grid bm-form" style="margin-top:6px">
-          <div class="field"><label>work_key</label><input id="bmWorkKey" placeholder="frame_concrete"></div>
-          <div class="field"><label>Код ресурса</label><input id="bmCode" placeholder="concrete_b25"></div>
-          <div class="field"><label>Название</label><input id="bmName" placeholder="Бетон B25"></div>
-          <div class="field"><label>Вид</label><select id="bmKind"><option value="material">материал</option><option value="labor">труд</option><option value="machine">машины</option></select></div>
-          <div class="field"><label>Ед.</label><input id="bmUnit" placeholder="м³"></div>
-          <div class="field"><label>Расход на ед.</label><input id="bmCons" type="number" step="0.01" value="1"></div>
-          <div class="field"><label>Цена, ₸</label><input id="bmPrice" type="number" step="1" value="0"></div>
-          <div class="field"><label>Регион</label><input id="bmRegion" value="KZ"></div>
-        </div>
-        <div class="row-actions"><button class="btn accent" id="bmAdd">Добавить в справочник</button></div>
       </div>
 
       <div class="section-h">Системные промпты</div>
@@ -1247,35 +1307,6 @@ async function viewSettings() {
   document.querySelectorAll("[data-reset-prompt]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Сбросить промпт к заводскому?")) return;
     await Api.resetPrompt(b.dataset.resetPrompt); toast("Промпт сброшен"); viewSettings();
-  }));
-
-  const bmAddBtn = document.getElementById("bmAdd");
-  if (bmAddBtn) bmAddBtn.addEventListener("click", async () => {
-    const g = (id) => (document.getElementById(id).value || "").trim();
-    const body = {
-      work_key: g("bmWorkKey"), code: g("bmCode"), name: g("bmName"),
-      kind: document.getElementById("bmKind").value, unit: g("bmUnit"),
-      consumption: Number(document.getElementById("bmCons").value || 1),
-      price: Number(document.getElementById("bmPrice").value || 0), region: g("bmRegion") || "KZ",
-    };
-    if (!body.work_key || !body.code || !body.unit) { toast("Заполните work_key, код и единицу", true); return; }
-    try { await Api.addBenchmark(body); toast("Добавлено в справочник"); viewSettings(); }
-    catch (e) { toast(e.detail || "Ошибка", true); }
-  });
-  const bmCsv = document.getElementById("bmCsv");
-  if (bmCsv) bmCsv.addEventListener("change", async () => {
-    const file = bmCsv.files && bmCsv.files[0];
-    if (!file) return;
-    try {
-      const rep = await Api.importBenchmark(await file.text());
-      toast(`Загружено: +${rep.inserted}, обновлено ${rep.updated}, брак ${rep.skipped}`, rep.skipped > 0);
-      viewSettings();
-    } catch (e) { toast(e.detail || "Ошибка загрузки CSV", true); }
-  });
-  document.querySelectorAll("[data-bm-del]").forEach((b) => b.addEventListener("click", async () => {
-    if (!confirm("Удалить позицию из справочника?")) return;
-    try { await Api.deleteBenchmark(b.dataset.bmDel); toast("Удалено"); viewSettings(); }
-    catch (e) { toast(e.detail || "Ошибка", true); }
   }));
 }
 

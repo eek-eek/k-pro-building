@@ -1,6 +1,7 @@
 """REST + SSE эндпоинты."""
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import json
 import math
@@ -25,7 +26,8 @@ from ..llm import get_provider
 from ..calc.resource_catalog import BENCHMARK_PRICE_LEVEL
 from ..calc.estimate import VALID_WORK_KEYS
 from ..calc.units import unit_ok_for_kind
-from ..gosdata.core import run_import_resources
+from ..gosdata.core import import_resource_rows
+from ..gosdata.xlsx import read_xlsx_dicts
 from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, NormDocument, PriceItem, Prompt, WorkResource
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
@@ -568,7 +570,7 @@ def _benchmark_dict(r: WorkResource) -> dict:
 
 
 @router.get("/benchmark")
-def list_benchmark(db: Session = Depends(get_db), _a: None = Depends(require_admin)) -> list[dict]:
+def list_benchmark(db: Session = Depends(get_db)) -> list[dict]:
     rows = db.scalars(select(WorkResource)
                       .where(WorkResource.price_level == BENCHMARK_PRICE_LEVEL)
                       .order_by(WorkResource.work_key, WorkResource.id)).all()
@@ -576,8 +578,7 @@ def list_benchmark(db: Session = Depends(get_db), _a: None = Depends(require_adm
 
 
 @router.post("/benchmark")
-def upsert_benchmark(body: BenchmarkPriceIn, db: Session = Depends(get_db),
-                     _a: None = Depends(require_admin)) -> dict:
+def upsert_benchmark(body: BenchmarkPriceIn, db: Session = Depends(get_db)) -> dict:
     if body.work_key not in VALID_WORK_KEYS:
         raise HTTPException(status_code=400,
                             detail=f"неизвестный work_key {body.work_key!r}. Допустимые: "
@@ -607,14 +608,19 @@ def upsert_benchmark(body: BenchmarkPriceIn, db: Session = Depends(get_db),
 
 
 @router.post("/benchmark/import")
-def import_benchmark(body: dict = Body(default={}), db: Session = Depends(get_db),
-                     _a: None = Depends(require_admin)) -> dict:
-    """Bulk-загрузка справочника из CSV (тот же формат, что и ресурсы; price_level и
-    source форсируются в «бенчмарк»). Возвращает отчёт (добавлено/обновлено/брак)."""
-    csv_text = str(body.get("csv") or "")
-    if not csv_text.strip():
-        raise HTTPException(status_code=400, detail="пустой CSV")
-    report = run_import_resources(db, csv_text, force_price_level=BENCHMARK_PRICE_LEVEL,
+def import_benchmark(body: dict = Body(default={}), db: Session = Depends(get_db)) -> dict:
+    """Bulk-загрузка справочника из .xlsx (base64). Колонки как в шаблоне; price_level и
+    source форсируются в «бенчмарк». Возвращает отчёт (добавлено/обновлено/брак)."""
+    b64 = str(body.get("xlsx_b64") or "")
+    if not b64:
+        raise HTTPException(status_code=400, detail="нет файла")
+    try:
+        rows = read_xlsx_dicts(base64.b64decode(b64))
+    except Exception:
+        raise HTTPException(status_code=400, detail="не удалось прочитать .xlsx")
+    if not rows:
+        raise HTTPException(status_code=400, detail="файл пуст или нет строк с данными")
+    report = import_resource_rows(db, rows, force_price_level=BENCHMARK_PRICE_LEVEL,
                                   force_source="benchmark")
     return {"summary": report.summary(), "inserted": report.inserted,
             "updated": report.updated, "skipped": report.skipped,
@@ -622,8 +628,7 @@ def import_benchmark(body: dict = Body(default={}), db: Session = Depends(get_db
 
 
 @router.delete("/benchmark/{rid}", status_code=204)
-def delete_benchmark(rid: int, db: Session = Depends(get_db),
-                     _a: None = Depends(require_admin)) -> Response:
+def delete_benchmark(rid: int, db: Session = Depends(get_db)) -> Response:
     row = db.get(WorkResource, rid)
     if row is None or row.price_level != BENCHMARK_PRICE_LEVEL:
         raise HTTPException(status_code=404, detail="benchmark price not found")

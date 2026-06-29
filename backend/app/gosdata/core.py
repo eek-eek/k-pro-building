@@ -82,14 +82,14 @@ def _upsert_work_resource(db: Session, c: dict) -> str:
     return "updated"
 
 
-def run_import_resources(db: Session, csv_text: str, *,
+def import_resource_rows(db: Session, rows, *,
                          force_price_level: str | None = None,
                          force_source: str | None = None) -> ImportReport:
-    """Импорт ресурсов из CSV. force_price_level/force_source перекрывают значения
-    из файла (напр. для загрузки внутреннего бенчмаркинга — price_level=бенчмарк)."""
+    """Импорт ресурсов из итерируемого набора dict-строк (CSV или xlsx).
+    force_price_level/force_source перекрывают значения из файла (напр. для загрузки
+    внутреннего бенчмаркинга — price_level=бенчмарк)."""
     report = ImportReport(target="work_resources")
-    reader = csv.DictReader(io.StringIO(csv_text))
-    for i, row in enumerate(reader, start=2):
+    for i, row in enumerate(rows, start=2):
         clean, err = _validate_work_resource(row)
         if err:
             report.skipped += 1
@@ -103,3 +103,11 @@ def run_import_resources(db: Session, csv_text: str, *,
         setattr(report, result, getattr(report, result) + 1)
     db.commit()
     return report
+
+
+def run_import_resources(db: Session, csv_text: str, *,
+                         force_price_level: str | None = None,
+                         force_source: str | None = None) -> ImportReport:
+    """Импорт ресурсов из CSV-текста."""
+    return import_resource_rows(db, csv.DictReader(io.StringIO(csv_text)),
+                                force_price_level=force_price_level, force_source=force_source)

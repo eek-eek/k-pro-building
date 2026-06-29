@@ -1,14 +1,11 @@
 """Внутренний справочник цен (бенчмаркинг) — приоритет над сидовыми ценами."""
-import base64
-
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.calc.resource_catalog import db_snapshot_for, BENCHMARK_PRICE_LEVEL
 from app.models import WorkResource
 
-_AUTH = "Basic " + base64.b64encode(b"admin:admin12345").decode()
-client = TestClient(app, headers={"Authorization": _AUTH})
+client = TestClient(app)  # справочник цен — открытый раздел, без авторизации
 
 
 def test_benchmark_overlays_by_code_keeps_rest(db):
@@ -50,11 +47,9 @@ def test_benchmark_adds_new_code(db):
         db.commit()
 
 
-def test_benchmark_crud_requires_auth():
-    anon = TestClient(app)
-    assert anon.get("/api/benchmark").status_code == 401
-    assert anon.post("/api/benchmark", json={"work_key": "x", "code": "y",
-                     "kind": "material", "unit": "м³"}).status_code == 401
+def test_benchmark_endpoints_are_public():
+    # отдельный раздел, не за авторизацией Настроек
+    assert client.get("/api/benchmark").status_code == 200
 
 
 def test_benchmark_add_list_delete():
