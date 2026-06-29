@@ -115,6 +115,34 @@ RECOMMENDATIONS: list[Recommendation] = [
         basis="1.5% от прямых затрат",
         cost=lambda inp, r: (1.0, 0.0, round(_direct(r) * 0.015), 0.0),
     ),
+    # «Дополнительно» из мапинга сметчика (опционально, как и прочие рекомендации):
+    Recommendation(
+        key="doors",
+        title="Внутренние двери",
+        unit="усл.",
+        norm="СН РК 3.02-09",
+        keywords=("межкомнат", "внутренние двер"),
+        basis="2.5% от прямых затрат (ориентировочно)",
+        cost=lambda inp, r: (1.0, round(_direct(r) * 0.02), round(_direct(r) * 0.005), 0.0),
+    ),
+    Recommendation(
+        key="fine_finish",
+        title="Чистовая отделка",
+        unit="усл.",
+        norm="СН РК 8.02-04",
+        keywords=("чистов",),
+        basis="8% от прямых затрат (ориентировочно)",
+        cost=lambda inp, r: (1.0, round(_direct(r) * 0.05), round(_direct(r) * 0.03), 0.0),
+    ),
+    Recommendation(
+        key="misc_works",
+        title="Прочие работы (металлоконструкции, поручни, решётки)",
+        unit="усл.",
+        norm="СН РК 5.04-23",
+        keywords=("прочие работ", "металлоконстр", "поручн", "решётк"),
+        basis="2% от прямых затрат (ориентировочно)",
+        cost=lambda inp, r: (1.0, round(_direct(r) * 0.012), round(_direct(r) * 0.008), 0.0),
+    ),
 ]
 
 _BY_KEY: dict[str, Recommendation] = {r.key: r for r in RECOMMENDATIONS}

@@ -52,6 +52,15 @@ SECTIONS: list[tuple[int, str, list[str], list[str]]] = [
      ["landscaping"], ["благоустр"]),
 ]
 
+# Детализация конструктива на под-позиции (доли — ОРИЕНТИРОВОЧНЫЕ, нужна проверка
+# сметчиком; запрос тестировщика: ОВиК→3, ВК→2, благоустройство→2).
+SPLIT_SPECS: dict[str, list[tuple[str, float]]] = {
+    "hvac": [("Отопление", 0.45), ("Вентиляция", 0.30), ("Кондиционирование", 0.25)],
+    "plumbing": [("Водопровод (ХВС/ГВС)", 0.55), ("Канализация", 0.45)],
+    "landscaping": [("Благоустройство территории", 0.60), ("Наружные инженерные сети", 0.40)],
+}
+
+
 PREP_TITLE = "Подготовительные работы и временные сооружения"
 
 CONTRACTOR_QUESTIONS = [
@@ -179,29 +188,35 @@ def build_estimate(
                 comment = (comment + "; " if comment else "") + \
                     f"цены проиндексированы ×{pfactor:g} (инфляция, цены от {pdate})"
             unit_cost = material_price + labor_price + machine_price
-            line_total = round(vol.quantity * unit_cost)
-            sub_index += 1
-            lines.append(
-                EstimateLine(
-                    no=f"{number}.{sub_index}",
-                    section=title,
-                    title=vol.title,
-                    norm=vol.norm,
-                    unit=vol.unit,
-                    quantity=vol.quantity,
-                    material_price=material_price,
-                    labor_price=labor_price,
-                    machine_price=machine_price,
-                    total=line_total,
-                    needs_review=vol.needs_review,
-                    comment=comment,
-                    resources=resources,
-                    price_source=psource,
-                    price_date=pdate,
-                    price_stale=pstale,
-                )
-            )
-            section_sum += line_total
+            splits = SPLIT_SPECS.get(key)
+            if splits:
+                # Детализация конструктива: под-позиции по ориентировочным долям.
+                for sub_title, share in splits:
+                    sub_qty = round(vol.quantity * share, 2)
+                    sub_total = round(sub_qty * unit_cost)
+                    if sub_total <= 0:
+                        continue
+                    sub_index += 1
+                    lines.append(EstimateLine(
+                        no=f"{number}.{sub_index}", section=title, title=sub_title,
+                        norm=vol.norm, unit=vol.unit, quantity=sub_qty,
+                        material_price=material_price, labor_price=labor_price,
+                        machine_price=machine_price, total=sub_total, needs_review=True,
+                        comment=(comment + "; " if comment else "")
+                                + "ориентировочная доля разбивки конструктива — уточнить",
+                        resources=[], price_source=psource, price_date=pdate, price_stale=pstale))
+                    section_sum += sub_total
+            else:
+                line_total = round(vol.quantity * unit_cost)
+                sub_index += 1
+                lines.append(EstimateLine(
+                    no=f"{number}.{sub_index}", section=title, title=vol.title,
+                    norm=vol.norm, unit=vol.unit, quantity=vol.quantity,
+                    material_price=material_price, labor_price=labor_price,
+                    machine_price=machine_price, total=line_total,
+                    needs_review=vol.needs_review, comment=comment, resources=resources,
+                    price_source=psource, price_date=pdate, price_stale=pstale))
+                section_sum += line_total
         if section_sum > 0:
             section_totals[title] = round(section_sum)
             direct_core += section_sum
