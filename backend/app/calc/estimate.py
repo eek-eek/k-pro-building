@@ -12,10 +12,13 @@ from ..schemas import (
     EstimateTotals,
     NormProfile,
 )
+from ..settings_service import get_effective_settings
 from .geometry import derive
 from .pricing import get_price
 from .resource_catalog import db_snapshot_for, rollup
 from .volumes import compute_volumes
+
+PRICE_STALE_MONTHS = 6  # порог «несвежести» цен — обратить внимание сметчику
 
 # (номер, название раздела, [ключи объёмов], [подстроки для фильтра по видам работ])
 # Разделы = «конструктивы» (по мапингу сметчика). Каждый объём отнесён к своему
@@ -100,6 +103,27 @@ def _clamp_total_area(inp: BuildingInput, geo) -> str | None:
     )
 
 
+def _line_price_meta(resources, today: dt.date, inflation_pct: float):
+    """Сводные источник, дата актуализации, флаг несвежести (≥ PRICE_STALE_MONTHS) и
+    множитель инфляции строки. Множитель > 1 только если цены устарели и инфляция включена."""
+    dates = [r.updated_at for r in resources if r.updated_at]
+    sources = [r.source for r in resources if r.source]
+    price_date = max(dates) if dates else ""
+    price_source = max(set(sources), key=sources.count) if sources else ""
+    stale, factor = False, 1.0
+    if price_date:
+        try:
+            d = dt.date.fromisoformat(price_date)
+            months = (today.year - d.year) * 12 + (today.month - d.month)
+            if months >= PRICE_STALE_MONTHS:
+                stale = True
+                if inflation_pct > 0:
+                    factor = round((1 + inflation_pct / 100) ** (months / 12), 4)
+        except ValueError:
+            pass
+    return price_source, price_date, stale, factor
+
+
 def build_estimate(
     db: Session, inp: BuildingInput, profile: NormProfile
 ) -> EstimateResult:
@@ -114,6 +138,12 @@ def build_estimate(
             geo = derive(inp)  # пересчёт геометрии под скорректированную площадь
     volumes = compute_volumes(inp, profile, geo)
     region = inp.city.split("/")[0].strip() or "KZ"
+
+    eff = get_effective_settings(db)
+    inflation_pct = eff.price_inflation_annual_pct
+    today = dt.datetime.now(dt.timezone.utc).date()
+    stale_count = 0
+    inflated = False
 
     works_lc = [w.lower() for w in inp.works if w.strip()]
     lines: list[EstimateLine] = []
@@ -137,6 +167,17 @@ def build_estimate(
                 material_price, labor_price, machine_price = (
                     price.material, price.labor, price.machine
                 )
+            psource, pdate, pstale, pfactor = _line_price_meta(resources, today, inflation_pct)
+            if pstale:
+                stale_count += 1
+            comment = "требует проверки сметчиком" if vol.needs_review else ""
+            if pfactor != 1.0:  # устаревшие цены проиндексированы на инфляцию
+                material_price = round(material_price * pfactor)
+                labor_price = round(labor_price * pfactor)
+                machine_price = round(machine_price * pfactor)
+                inflated = True
+                comment = (comment + "; " if comment else "") + \
+                    f"цены проиндексированы ×{pfactor:g} (инфляция, цены от {pdate})"
             unit_cost = material_price + labor_price + machine_price
             line_total = round(vol.quantity * unit_cost)
             sub_index += 1
@@ -153,8 +194,11 @@ def build_estimate(
                     machine_price=machine_price,
                     total=line_total,
                     needs_review=vol.needs_review,
-                    comment="требует проверки сметчиком" if vol.needs_review else "",
+                    comment=comment,
                     resources=resources,
+                    price_source=psource,
+                    price_date=pdate,
+                    price_stale=pstale,
                 )
             )
             section_sum += line_total
@@ -221,6 +265,14 @@ def build_estimate(
             f"Позиций, требующих проверки сметчиком: {review_count}. "
             "Номера норм не выдуманы; неподтверждённые отмечены."
         )
+    if stale_count:
+        msg = (f"Цены по {stale_count} позиц. не обновлялись ≥ {PRICE_STALE_MONTHS} мес — "
+               "обратить внимание, актуализировать.")
+        if inflated:
+            msg += f" Устаревшие цены проиндексированы на инфляцию ({inflation_pct:g}%/год)."
+        elif inflation_pct <= 0:
+            msg += " Коэффициент инфляции в настройках не задан (индексация выключена)."
+        warnings.append(msg)
     if profile.from_cache:
         warnings.append("Нормативный профиль взят из кэша БД (без обращения к LLM).")
     if profile.cross_check and profile.cross_check.ran:

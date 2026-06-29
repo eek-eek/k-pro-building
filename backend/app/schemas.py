@@ -177,6 +177,8 @@ class ResourceLine(BaseModel):
     unit: str
     consumption: float
     price: float = 0.0
+    source: str = ""       # происхождение цены: seed|ndcs|erer|ssc|manual|llm|benchmark
+    updated_at: str = ""   # дата актуализации цены (ISO), для проверки свежести
 
 
 class EstimateLine(BaseModel):
@@ -193,6 +195,9 @@ class EstimateLine(BaseModel):
     comment: str = ""
     needs_review: bool = False
     resources: list[ResourceLine] = []
+    price_source: str = ""   # сводный источник цен строки
+    price_date: str = ""     # самая поздняя дата актуализации цен строки (ISO)
+    price_stale: bool = False  # цены не обновлялись ≥ порога (по умолчанию 6 мес)
 
 
 class EstimateTotals(BaseModel):
@@ -333,6 +338,7 @@ class SettingsUpdate(BaseModel):
     use_search: Optional[bool] = None
     cross_check_enabled: Optional[bool] = None
     cross_check_provider: Optional[str] = None
+    price_inflation_annual_pct: Optional[float] = None
 
 
 class TestConnectionRequest(BaseModel):

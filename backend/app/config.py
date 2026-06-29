@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     llm_use_search: bool = True
     cross_check_enabled: bool = False
     cross_check_provider: str = "openai"  # проверяющий провайдер (ансамбль)
+    price_inflation_annual_pct: float = 0.0  # годовая инфляция для устаревших цен (0 = выкл)
 
     # Админ-доступ (Настройки/Промпты). На проде ОБЯЗАТЕЛЬНО задать ADMIN_PASSWORD
     # в .env — дефолт ниже только для локальной разработки.

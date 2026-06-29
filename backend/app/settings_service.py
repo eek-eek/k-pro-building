@@ -29,7 +29,7 @@ MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
 SETTING_KEYS = (
     "llm_provider", "gemini_api_key", "anthropic_api_key", "openai_api_key",
     "gemini_model", "anthropic_model", "openai_model", "llm_use_search",
-    "cross_check_enabled", "cross_check_provider",
+    "cross_check_enabled", "cross_check_provider", "price_inflation_annual_pct",
 )
 _BOOL_KEYS = {"llm_use_search", "cross_check_enabled"}
 
@@ -46,6 +46,7 @@ class EffectiveSettings:
     llm_use_search: bool
     cross_check_enabled: bool = False
     cross_check_provider: str = "openai"
+    price_inflation_annual_pct: float = 0.0  # годовая инфляция для устаревших цен (0 = выкл)
 
     def active_key(self) -> str:
         return getattr(self, f"{self.llm_provider}_api_key", "")
@@ -58,6 +59,13 @@ def _as_bool(value) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _overrides(db: Session) -> dict[str, str]:
@@ -82,6 +90,7 @@ def get_effective_settings(db: Session) -> EffectiveSettings:
         llm_use_search=_as_bool(pick("llm_use_search")),
         cross_check_enabled=_as_bool(pick("cross_check_enabled")),
         cross_check_provider=pick("cross_check_provider"),
+        price_inflation_annual_pct=_as_float(pick("price_inflation_annual_pct")),
     )
 
 

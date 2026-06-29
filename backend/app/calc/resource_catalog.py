@@ -228,7 +228,8 @@ def db_snapshot_for(
         if rows:
             return [
                 ResourceLine(code=r.code, name=r.name, kind=r.kind, unit=r.unit,
-                             consumption=r.consumption, price=r.price)
+                             consumption=r.consumption, price=r.price, source=r.source,
+                             updated_at=r.updated_at.date().isoformat() if r.updated_at else "")
                 for r in rows
             ]
     return snapshot_for(work_key)

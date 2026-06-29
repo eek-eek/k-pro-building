@@ -719,6 +719,18 @@ function resAddRow(i) {
     <span class="hint" style="margin:0">сумма строки = объём × Σ(расход × цена)</span>
   </div></td></tr>`;
 }
+const SRC_LABEL = { seed: "сид", ndcs: "НДЦС", erer: "ЕРЕР", ssc: "ССЦ",
+  manual: "вручную", llm: "ИИ", benchmark: "бенчмарк", import: "импорт" };
+// Источник и дата актуализации цен строки + флаг несвежести (≥6 мес).
+function priceMeta(ln) {
+  if (!ln || (!ln.price_date && !ln.price_source)) return "";
+  const src = ln.price_source ? escapeHtml(SRC_LABEL[ln.price_source] || ln.price_source) : "";
+  const date = ln.price_date ? (src ? ", " : "") + escapeHtml(ln.price_date) : "";
+  const meta = (src || date) ? ` <span class="pmeta" title="Источник и дата актуализации цен">[${src}${date}]</span>` : "";
+  const stale = ln.price_stale
+    ? ` <span class="badge stale" title="Цены не обновлялись ≥6 мес — актуализировать">≥6 мес</span>` : "";
+  return meta + stale;
+}
 function renderLines(r) {
   const rows = [];
   const sectionTotals = r.section_totals || {};
@@ -743,7 +755,7 @@ function renderLines(r) {
           ((Number(ln.material_price) || 0) + (Number(ln.labor_price) || 0) + (Number(ln.machine_price) || 0)));
     rows.push(`<tr class="${ln.needs_review ? "review" : ""}">
       <td class="no">${escapeHtml(ln.no)}</td>
-      <td>${tog}${escapeHtml(ln.title)}${ln.needs_review ? ' <span class="badge">проверить</span>' : ""}</td>
+      <td>${tog}${escapeHtml(ln.title)}${ln.needs_review ? ' <span class="badge">проверить</span>' : ""}${priceMeta(ln)}</td>
       <td>${escapeHtml(ln.unit)}</td>
       <td class="num">${qtyCell}</td>
       <td class="num">${priceCell("material_price")}</td>
@@ -994,17 +1006,20 @@ function exportXlsx(r) {
       <td>${escapeHtml(l.norm || "")}</td><td>${escapeHtml(l.unit)}</td>
       <td class="n">${num(l.quantity)}</td><td class="n">${num(l.material_price)}</td>
       <td class="n">${num(l.labor_price)}</td><td class="n">${num(l.machine_price)}</td>
-      <td class="n">${num(l.total)}</td></tr>`;
+      <td class="n">${num(l.total)}</td>
+      <td>${escapeHtml((SRC_LABEL && SRC_LABEL[l.price_source]) || l.price_source || "")}</td>
+      <td>${escapeHtml(l.price_date || "")}${l.price_stale ? " ⚠≥6мес" : ""}</td></tr>`;
     (l.resources || []).forEach((res) => {
       const q = num(res.consumption) * num(l.quantity);
       h += `<tr class="res"><td></td><td></td>
         <td class="ri">${escapeHtml(res.name)} (${escapeHtml(KIND_LABEL[res.kind] || res.kind)})</td>
         <td></td><td>${escapeHtml(res.unit)}</td><td class="n">${q}</td>
-        <td class="n">${num(res.price)}</td><td></td><td></td><td class="n">${Math.round(q * num(res.price))}</td></tr>`;
+        <td class="n">${num(res.price)}</td><td></td><td></td><td class="n">${Math.round(q * num(res.price))}</td>
+        <td>${escapeHtml(res.source || "")}</td><td>${escapeHtml(res.updated_at || "")}</td></tr>`;
     });
     return h;
   }).join("");
-  const totRow = (label, val, bold) => `<tr><td colspan="9" style="border:none${bold ? ";font-weight:bold" : ""}">${label}</td><td class="n"${bold ? ' style="font-weight:bold"' : ""}>${num(val)}</td></tr>`;
+  const totRow = (label, val, bold) => `<tr><td colspan="11" style="border:none${bold ? ";font-weight:bold" : ""}">${label}</td><td class="n"${bold ? ' style="font-weight:bold"' : ""}>${num(val)}</td></tr>`;
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
     xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
     <head><meta charset="utf-8">
@@ -1019,11 +1034,12 @@ function exportXlsx(r) {
       td.ri { padding-left: 16px; }
     </style></head>
     <body>
-      <table><tr><td colspan="10" style="border:none;font-weight:bold;font-size:14px">${escapeHtml(r.project_name)}</td></tr>
-      <tr><td colspan="10" style="border:none;font-size:10px;color:#444">${escapeHtml(r.object_type)} · ${escapeHtml(r.city)} · ${escapeHtml(r.precision_class)} · ${escapeHtml(r.generated_at)}</td></tr></table>
+      <table><tr><td colspan="12" style="border:none;font-weight:bold;font-size:14px">${escapeHtml(r.project_name)}</td></tr>
+      <tr><td colspan="12" style="border:none;font-size:10px;color:#444">${escapeHtml(r.object_type)} · ${escapeHtml(r.city)} · ${escapeHtml(r.precision_class)} · ${escapeHtml(r.generated_at)}</td></tr></table>
       <table><thead><tr>
         <th>№</th><th>Конструктив</th><th>Работа / ресурс</th><th>Норма</th><th>Ед.</th>
         <th class="n">Объём</th><th class="n">Материал</th><th class="n">Работа</th><th class="n">Машины</th><th class="n">Итого, ₸</th>
+        <th>Источник</th><th>Дата цен</th>
       </tr></thead><tbody>${rows}</tbody></table>
       <table>
         ${totRow("Прямые затраты", t.direct)}
@@ -1109,6 +1125,9 @@ async function viewSettings() {
           <select id="crossProvider">${["gemini", "anthropic", "openai"].map((p) =>
             `<option value="${p}" ${p === s.cross_check_provider ? "selected" : ""}>${p}</option>`).join("")}</select>
           <div class="hint">Должен отличаться от основного, иначе проверка не выполнится.</div></div>
+        <div class="field"><label>Годовая инфляция для устаревших цен, %</label>
+          <input type="number" step="0.5" min="0" id="inflation" value="${escapeAttr(s.price_inflation_annual_pct ?? 0)}">
+          <div class="hint">0 = выкл. Цены старше 6 мес индексируются на этот коэффициент (НДЦС РК).</div></div>
         <div class="row-actions">
           <button class="btn primary" id="saveSettings">Сохранить</button>
           <button class="btn" id="testConn">Проверить соединение</button>
@@ -1160,6 +1179,7 @@ async function viewSettings() {
       use_search: document.getElementById("useSearch").checked,
       cross_check_enabled: document.getElementById("crossCheck").checked,
       cross_check_provider: document.getElementById("crossProvider").value || undefined,
+      price_inflation_annual_pct: Math.max(0, Number(document.getElementById("inflation").value || 0)),
     };
     const key = apiKeyEl.value.trim();
     if (key) body.api_key = key;   // шлём только реальный новый ключ (никогда masked)
