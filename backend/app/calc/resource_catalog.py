@@ -204,32 +204,37 @@ def seed_work_resources(db: Session, region: str = "KZ") -> None:
     db.commit()
 
 
+BENCHMARK_PRICE_LEVEL = "бенчмарк"  # внутренний справочник — приоритет над сидом/рынком
+
+
 def db_snapshot_for(
     db: Session, work_key: str, region: str = "KZ",
     price_level: str = SEED_PRICE_LEVEL,
 ) -> list[ResourceLine]:
     """Снимок ресурсов работы из БД (резолв region → KZ, фолбэк на COMPOSITIONS).
 
+    Приоритет: внутренний бенчмаркинг → переданный price_level → COMPOSITIONS.
     Порядок строк — по id (= порядок сида = порядок COMPOSITIONS), чтобы индексы
     ресурсов в строке сметы были стабильны для ручной правки.
     """
     from ..models import WorkResource
 
-    for reg in (region, "KZ"):
-        rows = db.scalars(
-            select(WorkResource)
-            .where(
-                WorkResource.work_key == work_key,
-                WorkResource.region == reg,
-                WorkResource.price_level == price_level,
-            )
-            .order_by(WorkResource.id)
-        ).all()
-        if rows:
-            return [
-                ResourceLine(code=r.code, name=r.name, kind=r.kind, unit=r.unit,
-                             consumption=r.consumption, price=r.price, source=r.source,
-                             updated_at=r.updated_at.date().isoformat() if r.updated_at else "")
-                for r in rows
-            ]
+    for pl in (BENCHMARK_PRICE_LEVEL, price_level):  # бенчмарк имеет приоритет
+        for reg in (region, "KZ"):
+            rows = db.scalars(
+                select(WorkResource)
+                .where(
+                    WorkResource.work_key == work_key,
+                    WorkResource.region == reg,
+                    WorkResource.price_level == pl,
+                )
+                .order_by(WorkResource.id)
+            ).all()
+            if rows:
+                return [
+                    ResourceLine(code=r.code, name=r.name, kind=r.kind, unit=r.unit,
+                                 consumption=r.consumption, price=r.price, source=r.source,
+                                 updated_at=r.updated_at.date().isoformat() if r.updated_at else "")
+                    for r in rows
+                ]
     return snapshot_for(work_key)

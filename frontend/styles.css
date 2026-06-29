@@ -369,6 +369,13 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 .home-steps b { color: var(--accent); font-family: var(--mono); }
 @media (max-width: 720px) { .home-cards { grid-template-columns: 1fr; } }
 
+/* внутренний справочник цен (бенчмаркинг) */
+.bm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bm-table th, .bm-table td { border-bottom: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+.bm-table th { color: var(--text-2); font-weight: 600; }
+.bm-table td.num, .bm-table th.num { text-align: right; font-family: var(--mono); }
+.bm-form { gap: 8px; }
+
 /* источник/дата цен и флаг несвежести в строке сметы */
 .pmeta { color: #9a958c; font-size: 11px; font-family: var(--mono); }
 .badge.stale { background: var(--warn-bg); color: var(--warn); }

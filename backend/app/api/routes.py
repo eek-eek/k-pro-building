@@ -22,7 +22,9 @@ from ..database import get_db
 from ..geo import bbox_dims_m, polygon_area_m2
 from ..jobs import job_manager
 from ..llm import get_provider
-from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, NormDocument, PriceItem, Prompt
+from ..calc.resource_catalog import BENCHMARK_PRICE_LEVEL
+from ..calc.units import unit_ok_for_kind
+from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, NormDocument, PriceItem, Prompt, WorkResource
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
 from ..prompts import PROMPT_DEFAULTS
@@ -31,6 +33,7 @@ from ..schemas import (
     EstimateResult, JobStatus, ManualEditRequest, NormSource,
     ObjectCard, ObjectCreate, ObjectPatch, RecommendationAdd, RollbackRequest, ZoneVerdict,
     to_jsonable, SettingsUpdate, TestConnectionRequest, PromptUpdate, SuggestPricesRequest,
+    BenchmarkPriceIn,
 )
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
 from ..versioning import create_version, summarize_diff
@@ -551,6 +554,61 @@ def reset_prompt(key: str, db: Session = Depends(get_db), _a: None = Depends(req
     row.is_custom = False
     db.commit()
     return {"ok": True}
+
+
+# ───────────── Внутренний справочник цен (бенчмаркинг) ─────────────
+# Цены с price_level="бенчмарк" имеют приоритет над сидовыми/рыночными (db_snapshot_for).
+def _benchmark_dict(r: WorkResource) -> dict:
+    return {"id": r.id, "work_key": r.work_key, "code": r.code, "name": r.name,
+            "kind": r.kind, "unit": r.unit, "consumption": r.consumption, "price": r.price,
+            "region": r.region,
+            "updated_at": r.updated_at.date().isoformat() if r.updated_at else ""}
+
+
+@router.get("/benchmark")
+def list_benchmark(db: Session = Depends(get_db), _a: None = Depends(require_admin)) -> list[dict]:
+    rows = db.scalars(select(WorkResource)
+                      .where(WorkResource.price_level == BENCHMARK_PRICE_LEVEL)
+                      .order_by(WorkResource.work_key, WorkResource.id)).all()
+    return [_benchmark_dict(r) for r in rows]
+
+
+@router.post("/benchmark")
+def upsert_benchmark(body: BenchmarkPriceIn, db: Session = Depends(get_db),
+                     _a: None = Depends(require_admin)) -> dict:
+    if body.kind not in ("material", "labor", "machine"):
+        raise HTTPException(status_code=400, detail="kind: material | labor | machine")
+    if not unit_ok_for_kind(body.unit, body.kind):
+        raise HTTPException(status_code=400,
+                            detail=f"единица {body.unit!r} не подходит для вида {body.kind}")
+    row = db.scalar(select(WorkResource).where(
+        WorkResource.work_key == body.work_key, WorkResource.code == body.code,
+        WorkResource.region == body.region,
+        WorkResource.price_level == BENCHMARK_PRICE_LEVEL))
+    if row is None:
+        row = WorkResource(work_key=body.work_key, code=body.code, region=body.region,
+                           price_level=BENCHMARK_PRICE_LEVEL)
+        db.add(row)
+    row.name = body.name or body.code
+    row.kind = body.kind
+    row.unit = body.unit
+    row.consumption = max(0.0, body.consumption)
+    row.price = max(0.0, body.price)
+    row.source = "benchmark"
+    row.needs_review = False
+    db.commit()
+    return _benchmark_dict(row)
+
+
+@router.delete("/benchmark/{rid}", status_code=204)
+def delete_benchmark(rid: int, db: Session = Depends(get_db),
+                     _a: None = Depends(require_admin)) -> Response:
+    row = db.get(WorkResource, rid)
+    if row is None or row.price_level != BENCHMARK_PRICE_LEVEL:
+        raise HTTPException(status_code=404, detail="benchmark price not found")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=204)
 
 
 # ───────────────────────── Объекты строительства ─────────────────────────

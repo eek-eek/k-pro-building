@@ -79,6 +79,9 @@ const Api = {
   getSettings: () => api("GET", "/settings"),
   putSettings: (b) => api("PUT", "/settings", b),
   testConn: (b) => api("POST", "/settings/test", b),
+  listBenchmark: () => api("GET", "/benchmark"),
+  addBenchmark: (b) => api("POST", "/benchmark", b),
+  deleteBenchmark: (id) => api("DELETE", `/benchmark/${id}`),
   listPrompts: () => api("GET", "/prompts"),
   putPrompt: (key, body) => api("PUT", `/prompts/${key}`, { body }),
   resetPrompt: (key) => api("POST", `/prompts/${key}/reset`),
@@ -1091,10 +1094,11 @@ function renderSettingsLogin(msg) {
 
 async function viewSettings() {
   if (!ADMIN_AUTH) return renderSettingsLogin();
-  let s, prompts;
+  let s, prompts, benchmark = [];
   try {
     s = await Api.getSettings();
     prompts = await Api.listPrompts();
+    try { benchmark = await Api.listBenchmark(); } catch (e) { /* ignore */ }
   } catch (e) {
     if (e.status === 401) {
       ADMIN_AUTH = null; sessionStorage.removeItem("adminAuth");
@@ -1133,6 +1137,23 @@ async function viewSettings() {
           <button class="btn" id="testConn">Проверить соединение</button>
           <span class="test-status" id="testStatus"></span>
         </div>
+      </div>
+
+      <div class="section-h">Внутренний справочник цен (бенчмаркинг)</div>
+      <div class="card">
+        <div class="hint" style="margin-bottom:8px">Свои цены имеют приоритет над сидовыми/рыночными в расчёте (по ключу работы + коду ресурса). work_key — как в расчёте (напр. frame_concrete, roof).</div>
+        <div id="bmList">${benchmarkRows(benchmark)}</div>
+        <div class="grid bm-form" style="margin-top:10px">
+          <div class="field"><label>work_key</label><input id="bmWorkKey" placeholder="frame_concrete"></div>
+          <div class="field"><label>Код ресурса</label><input id="bmCode" placeholder="concrete_b25"></div>
+          <div class="field"><label>Название</label><input id="bmName" placeholder="Бетон B25"></div>
+          <div class="field"><label>Вид</label><select id="bmKind"><option value="material">материал</option><option value="labor">труд</option><option value="machine">машины</option></select></div>
+          <div class="field"><label>Ед.</label><input id="bmUnit" placeholder="м³"></div>
+          <div class="field"><label>Расход на ед.</label><input id="bmCons" type="number" step="0.01" value="1"></div>
+          <div class="field"><label>Цена, ₸</label><input id="bmPrice" type="number" step="1" value="0"></div>
+          <div class="field"><label>Регион</label><input id="bmRegion" value="KZ"></div>
+        </div>
+        <div class="row-actions"><button class="btn accent" id="bmAdd">Добавить в справочник</button></div>
       </div>
 
       <div class="section-h">Системные промпты</div>
@@ -1214,6 +1235,38 @@ async function viewSettings() {
     if (!confirm("Сбросить промпт к заводскому?")) return;
     await Api.resetPrompt(b.dataset.resetPrompt); toast("Промпт сброшен"); viewSettings();
   }));
+
+  const bmAddBtn = document.getElementById("bmAdd");
+  if (bmAddBtn) bmAddBtn.addEventListener("click", async () => {
+    const g = (id) => (document.getElementById(id).value || "").trim();
+    const body = {
+      work_key: g("bmWorkKey"), code: g("bmCode"), name: g("bmName"),
+      kind: document.getElementById("bmKind").value, unit: g("bmUnit"),
+      consumption: Number(document.getElementById("bmCons").value || 1),
+      price: Number(document.getElementById("bmPrice").value || 0), region: g("bmRegion") || "KZ",
+    };
+    if (!body.work_key || !body.code || !body.unit) { toast("Заполните work_key, код и единицу", true); return; }
+    try { await Api.addBenchmark(body); toast("Добавлено в справочник"); viewSettings(); }
+    catch (e) { toast(e.detail || "Ошибка", true); }
+  });
+  document.querySelectorAll("[data-bm-del]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Удалить позицию из справочника?")) return;
+    try { await Api.deleteBenchmark(b.dataset.bmDel); toast("Удалено"); viewSettings(); }
+    catch (e) { toast(e.detail || "Ошибка", true); }
+  }));
+}
+
+function benchmarkRows(rows) {
+  if (!rows || !rows.length)
+    return `<div class="hint">Справочник пуст — добавьте свои цены ниже.</div>`;
+  return `<table class="bm-table"><thead><tr><th>work_key</th><th>Код</th><th>Название</th>
+    <th>Вид</th><th>Ед.</th><th class="num">Расход</th><th class="num">Цена ₸</th><th>Регион</th><th></th></tr></thead><tbody>` +
+    rows.map((r) => `<tr><td>${escapeHtml(r.work_key)}</td><td>${escapeHtml(r.code)}</td>
+      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(KIND_LABEL[r.kind] || r.kind)}</td>
+      <td>${escapeHtml(r.unit)}</td><td class="num">${escapeHtml(r.consumption)}</td>
+      <td class="num">${money(r.price)}</td><td>${escapeHtml(r.region)}</td>
+      <td><button class="btn danger sm" data-bm-del="${r.id}">✕</button></td></tr>`).join("") +
+    `</tbody></table>`;
 }
 function promptBlock(p) {
   return `<div class="prompt-block">

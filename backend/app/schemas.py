@@ -331,6 +331,18 @@ class ChatPost(BaseModel):
     message: str = Field(min_length=1)
 
 
+class BenchmarkPriceIn(BaseModel):
+    """Строка внутреннего справочника цен (бенчмаркинг)."""
+    work_key: str
+    code: str
+    name: str = ""
+    kind: str  # material | labor | machine
+    unit: str
+    consumption: float = 1.0
+    price: float = 0.0
+    region: str = "KZ"
+
+
 class SettingsUpdate(BaseModel):
     provider: Optional[str] = None
     api_key: Optional[str] = None
