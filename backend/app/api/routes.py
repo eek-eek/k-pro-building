@@ -23,7 +23,9 @@ from ..geo import bbox_dims_m, polygon_area_m2
 from ..jobs import job_manager
 from ..llm import get_provider
 from ..calc.resource_catalog import BENCHMARK_PRICE_LEVEL
+from ..calc.estimate import VALID_WORK_KEYS
 from ..calc.units import unit_ok_for_kind
+from ..gosdata.core import run_import_resources
 from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, NormDocument, PriceItem, Prompt, WorkResource
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
@@ -576,6 +578,10 @@ def list_benchmark(db: Session = Depends(get_db), _a: None = Depends(require_adm
 @router.post("/benchmark")
 def upsert_benchmark(body: BenchmarkPriceIn, db: Session = Depends(get_db),
                      _a: None = Depends(require_admin)) -> dict:
+    if body.work_key not in VALID_WORK_KEYS:
+        raise HTTPException(status_code=400,
+                            detail=f"неизвестный work_key {body.work_key!r}. Допустимые: "
+                                   + ", ".join(sorted(VALID_WORK_KEYS)))
     if body.kind not in ("material", "labor", "machine"):
         raise HTTPException(status_code=400, detail="kind: material | labor | machine")
     if not unit_ok_for_kind(body.unit, body.kind):
@@ -598,6 +604,21 @@ def upsert_benchmark(body: BenchmarkPriceIn, db: Session = Depends(get_db),
     row.needs_review = False
     db.commit()
     return _benchmark_dict(row)
+
+
+@router.post("/benchmark/import")
+def import_benchmark(body: dict = Body(default={}), db: Session = Depends(get_db),
+                     _a: None = Depends(require_admin)) -> dict:
+    """Bulk-загрузка справочника из CSV (тот же формат, что и ресурсы; price_level и
+    source форсируются в «бенчмарк»). Возвращает отчёт (добавлено/обновлено/брак)."""
+    csv_text = str(body.get("csv") or "")
+    if not csv_text.strip():
+        raise HTTPException(status_code=400, detail="пустой CSV")
+    report = run_import_resources(db, csv_text, force_price_level=BENCHMARK_PRICE_LEVEL,
+                                  force_source="benchmark")
+    return {"summary": report.summary(), "inserted": report.inserted,
+            "updated": report.updated, "skipped": report.skipped,
+            "errors": report.errors[:30]}
 
 
 @router.delete("/benchmark/{rid}", status_code=204)

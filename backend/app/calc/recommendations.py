@@ -192,7 +192,9 @@ def build_recommendation_line(
     qty, material, labor, machine = rec.cost(inp, result)
     existing = sum(1 for ln in result.lines if ln.section == REC_SECTION)
     return EstimateLine(
-        no=f"15.{existing + 1}",
+        # Префикс «Р» — глобально уникален, не сталкивается с номерами разделов (1..15),
+        # иначе by_no в редакторе чата схлопывал бы строки с одинаковым no.
+        no=f"Р.{existing + 1}",
         section=REC_SECTION,
         title=rec.title,
         norm=rec.norm,

@@ -207,34 +207,44 @@ def seed_work_resources(db: Session, region: str = "KZ") -> None:
 BENCHMARK_PRICE_LEVEL = "бенчмарк"  # внутренний справочник — приоритет над сидом/рынком
 
 
+def _wr_rows(db: Session, work_key: str, region: str, price_level: str) -> list[ResourceLine] | None:
+    """Ресурсы работы из БД по price_level (резолв region → KZ). None, если строк нет."""
+    from ..models import WorkResource
+
+    for reg in (region, "KZ"):
+        rows = db.scalars(
+            select(WorkResource)
+            .where(
+                WorkResource.work_key == work_key,
+                WorkResource.region == reg,
+                WorkResource.price_level == price_level,
+            )
+            .order_by(WorkResource.id)
+        ).all()
+        if rows:
+            return [
+                ResourceLine(code=r.code, name=r.name, kind=r.kind, unit=r.unit,
+                             consumption=r.consumption, price=r.price, source=r.source,
+                             updated_at=r.updated_at.date().isoformat() if r.updated_at else "")
+                for r in rows
+            ]
+    return None
+
+
 def db_snapshot_for(
     db: Session, work_key: str, region: str = "KZ",
     price_level: str = SEED_PRICE_LEVEL,
 ) -> list[ResourceLine]:
-    """Снимок ресурсов работы из БД (резолв region → KZ, фолбэк на COMPOSITIONS).
-
-    Приоритет: внутренний бенчмаркинг → переданный price_level → COMPOSITIONS.
-    Порядок строк — по id (= порядок сида = порядок COMPOSITIONS), чтобы индексы
-    ресурсов в строке сметы были стабильны для ручной правки.
+    """Снимок ресурсов работы: базовый состав (сид → COMPOSITIONS), поверх которого
+    ПОРЕСУРСНО (по коду) накладывается внутренний бенчмаркинг. Частичный бенчмарк
+    переопределяет только свои коды, остальной состав работы сохраняется (иначе —
+    молчаливое занижение). Порядок строк стабилен для ручной правки.
     """
-    from ..models import WorkResource
-
-    for pl in (BENCHMARK_PRICE_LEVEL, price_level):  # бенчмарк имеет приоритет
-        for reg in (region, "KZ"):
-            rows = db.scalars(
-                select(WorkResource)
-                .where(
-                    WorkResource.work_key == work_key,
-                    WorkResource.region == reg,
-                    WorkResource.price_level == pl,
-                )
-                .order_by(WorkResource.id)
-            ).all()
-            if rows:
-                return [
-                    ResourceLine(code=r.code, name=r.name, kind=r.kind, unit=r.unit,
-                                 consumption=r.consumption, price=r.price, source=r.source,
-                                 updated_at=r.updated_at.date().isoformat() if r.updated_at else "")
-                    for r in rows
-                ]
-    return snapshot_for(work_key)
+    base = _wr_rows(db, work_key, region, price_level) or snapshot_for(work_key)
+    bench = _wr_rows(db, work_key, region, BENCHMARK_PRICE_LEVEL)
+    if not bench:
+        return base
+    by_code = {b.code: b for b in bench}
+    merged = [by_code.pop(r.code, r) for r in base]  # бенчмарк по коду перекрывает базу
+    merged.extend(by_code.values())                  # бенчмарк-коды, которых нет в базе
+    return merged

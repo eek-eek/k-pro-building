@@ -60,6 +60,9 @@ SPLIT_SPECS: dict[str, list[tuple[str, float]]] = {
     "landscaping": [("Благоустройство территории", 0.60), ("Наружные инженерные сети", 0.40)],
 }
 
+# Допустимые ключи работ (для валидации бенчмарка — иначе «мёртвые» записи).
+VALID_WORK_KEYS = frozenset(k for _, _, keys, _ in SECTIONS for k in keys)
+
 
 PREP_TITLE = "Подготовительные работы и временные сооружения"
 
@@ -112,25 +115,33 @@ def _clamp_total_area(inp: BuildingInput, geo) -> str | None:
     )
 
 
-def _line_price_meta(resources, today: dt.date, inflation_pct: float):
-    """Сводные источник, дата актуализации, флаг несвежести (≥ PRICE_STALE_MONTHS) и
-    множитель инфляции строки. Множитель > 1 только если цены устарели и инфляция включена."""
-    dates = [r.updated_at for r in resources if r.updated_at]
-    sources = [r.source for r in resources if r.source]
-    price_date = max(dates) if dates else ""
-    price_source = max(set(sources), key=sources.count) if sources else ""
-    stale, factor = False, 1.0
-    if price_date:
-        try:
-            d = dt.date.fromisoformat(price_date)
-            months = (today.year - d.year) * 12 + (today.month - d.month)
-            if months >= PRICE_STALE_MONTHS:
-                stale = True
-                if inflation_pct > 0:
-                    factor = round((1 + inflation_pct / 100) ** (months / 12), 4)
-        except ValueError:
-            pass
-    return price_source, price_date, stale, factor
+def _price_age_months(date_str: str, today: dt.date):
+    """Возраст цены в полных месяцах (с учётом дня месяца). None — нет/битая дата."""
+    try:
+        d = dt.date.fromisoformat(date_str)
+    except (TypeError, ValueError):
+        return None
+    months = (today.year - d.year) * 12 + (today.month - d.month)
+    if today.day < d.day:  # последний месяц ещё не полный
+        months -= 1
+    return max(0, months)
+
+
+def _inflate_resources(resources, today: dt.date, inflation_pct: float):
+    """Пер-ресурсная индексация устаревших (≥ PRICE_STALE_MONTHS) цен — мутирует res.price
+    по числу месяцев именно его даты. Возвращает (источник самой свежей цены, её дата,
+    флаг несвежести строки, была ли индексация). Свежий ресурс не маскирует старые."""
+    latest_date, latest_source, stale_any, inflated_any = "", "", False, False
+    for res in resources:
+        if res.updated_at and res.updated_at > latest_date:
+            latest_date, latest_source = res.updated_at, res.source
+        months = _price_age_months(res.updated_at, today)
+        if months is not None and months >= PRICE_STALE_MONTHS:
+            stale_any = True
+            if inflation_pct > 0 and res.price:
+                res.price = round(res.price * (1 + inflation_pct / 100) ** (months / 12))
+                inflated_any = True
+    return latest_source, latest_date, stale_any, inflated_any
 
 
 def build_estimate(
@@ -169,18 +180,16 @@ def build_estimate(
             if vol is None or vol.quantity <= 0:
                 continue
             resources = db_snapshot_for(db, key, region)
-            psource, pdate, pstale, pfactor = _line_price_meta(resources, today, inflation_pct)
+            # Пер-ресурсная индексация инфляции (мутирует цены ресурсов до свёртки —
+            # переживает пересчёт; свежий ресурс не маскирует устаревшие).
+            psource, pdate, pstale, p_inflated = _inflate_resources(resources, today, inflation_pct)
             if pstale:
                 stale_count += 1
             comment = "требует проверки сметчиком" if vol.needs_review else ""
-            if pfactor != 1.0:
+            if p_inflated:
                 inflated = True
                 comment = (comment + "; " if comment else "") + \
-                    f"цены проиндексированы ×{pfactor:g} (инфляция, цены от {pdate})"
-                # Индексируем ЦЕНЫ РЕСУРСОВ (не агрегат) — иначе свёртка при пересчёте
-                # вернёт исходные цены и потеряет индексацию.
-                for res in resources:
-                    res.price = round(res.price * pfactor)
+                    f"цены проиндексированы на инфляцию (старые от {pdate})"
             if resources:
                 material_price, labor_price, machine_price = rollup(resources)
             else:
@@ -188,10 +197,6 @@ def build_estimate(
                 material_price, labor_price, machine_price = (
                     price.material, price.labor, price.machine
                 )
-                if pfactor != 1.0:  # без-ресурсная строка — индексируем агрегат
-                    material_price = round(material_price * pfactor)
-                    labor_price = round(labor_price * pfactor)
-                    machine_price = round(machine_price * pfactor)
             unit_cost = material_price + labor_price + machine_price
             splits = SPLIT_SPECS.get(key)
             if splits:

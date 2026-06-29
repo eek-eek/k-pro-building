@@ -82,7 +82,11 @@ def _upsert_work_resource(db: Session, c: dict) -> str:
     return "updated"
 
 
-def run_import_resources(db: Session, csv_text: str) -> ImportReport:
+def run_import_resources(db: Session, csv_text: str, *,
+                         force_price_level: str | None = None,
+                         force_source: str | None = None) -> ImportReport:
+    """Импорт ресурсов из CSV. force_price_level/force_source перекрывают значения
+    из файла (напр. для загрузки внутреннего бенчмаркинга — price_level=бенчмарк)."""
     report = ImportReport(target="work_resources")
     reader = csv.DictReader(io.StringIO(csv_text))
     for i, row in enumerate(reader, start=2):
@@ -91,6 +95,10 @@ def run_import_resources(db: Session, csv_text: str) -> ImportReport:
             report.skipped += 1
             report.errors.append(f"строка {i}: {err}")
             continue
+        if force_price_level:
+            clean["price_level"] = force_price_level
+        if force_source:
+            clean["source"] = force_source
         result = _upsert_work_resource(db, clean)
         setattr(report, result, getattr(report, result) + 1)
     db.commit()

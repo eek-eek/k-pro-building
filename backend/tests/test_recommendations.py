@@ -47,7 +47,7 @@ def test_pct_of_direct_recommendation_matches_basis():
 def test_build_line_is_fully_filled_and_self_consistent():
     inp, res = _result()
     line = build_recommendation_line("geodesy", inp, res)
-    assert line.no == "15.1"
+    assert line.no == "Р.1"
     assert line.section == REC_SECTION
     assert line.needs_review is True
     assert line.total > 0
@@ -82,7 +82,7 @@ def test_second_recommendation_gets_next_number():
     first = build_recommendation_line("supervision", inp, res)
     out = recompute_estimate(res, list(res.lines) + [first], inp)
     second = build_recommendation_line("geodesy", inp, out)
-    assert second.no == "15.2"
+    assert second.no == "Р.2"
 
 
 def test_floors_min_filters_elevators():

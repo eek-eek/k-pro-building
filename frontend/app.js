@@ -81,6 +81,7 @@ const Api = {
   testConn: (b) => api("POST", "/settings/test", b),
   listBenchmark: () => api("GET", "/benchmark"),
   addBenchmark: (b) => api("POST", "/benchmark", b),
+  importBenchmark: (csv) => api("POST", "/benchmark/import", { csv }),
   deleteBenchmark: (id) => api("DELETE", `/benchmark/${id}`),
   listPrompts: () => api("GET", "/prompts"),
   putPrompt: (key, body) => api("PUT", `/prompts/${key}`, { body }),
@@ -999,64 +1000,71 @@ function exportDocx(r) {
   URL.revokeObjectURL(a.href);
 }
 
-// ── Excel export (.xls via Office-Excel HTML; числа — реальные, для расчётов) ──
+// ── Excel export — настоящий .xlsx (OOXML), без предупреждения «файл повреждён» ──
+const _CRC_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+  return t;
+})();
+function _crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = _CRC_T[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function _zipStore(files) {  // ZIP без сжатия (store) — достаточно для xlsx
+  const enc = new TextEncoder();
+  const u16 = (n) => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = (n) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+  const parts = [], central = []; let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.data), crc = _crc32(data), sz = data.length;
+    parts.push(Uint8Array.from([0x50, 0x4b, 3, 4, ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(crc), ...u32(sz), ...u32(sz), ...u16(name.length), ...u16(0)]), name, data);
+    central.push(Uint8Array.from([0x50, 0x4b, 1, 2, ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(crc), ...u32(sz), ...u32(sz), ...u16(name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(offset)]), name);
+    offset += 30 + name.length + sz;
+  }
+  let cenLen = 0; central.forEach((c) => cenLen += c.length);
+  const eocd = Uint8Array.from([0x50, 0x4b, 5, 6, ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length), ...u32(cenLen), ...u32(offset), ...u16(0)]);
+  const all = [...parts, ...central, eocd]; let total = 0; all.forEach((a) => total += a.length);
+  const out = new Uint8Array(total); let p = 0; for (const a of all) { out.set(a, p); p += a.length; } return out;
+}
+function _xlEsc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function _xlGuard(s) { return /^[=+\-@]/.test(s) ? "'" + s : s; }  // защита от формул-инъекций
+function _xlCol(i) { let s = "", n = i + 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+
 function exportXlsx(r) {
   const t = r.totals || {};
   const num = (v) => (Number(v) || 0);
-  const rows = (r.lines || []).map((l) => {
-    let h = `<tr>
-      <td>${escapeHtml(l.no)}</td><td>${escapeHtml(l.section || "")}</td><td>${escapeHtml(l.title)}</td>
-      <td>${escapeHtml(l.norm || "")}</td><td>${escapeHtml(l.unit)}</td>
-      <td class="n">${num(l.quantity)}</td><td class="n">${num(l.material_price)}</td>
-      <td class="n">${num(l.labor_price)}</td><td class="n">${num(l.machine_price)}</td>
-      <td class="n">${num(l.total)}</td>
-      <td>${escapeHtml((SRC_LABEL && SRC_LABEL[l.price_source]) || l.price_source || "")}</td>
-      <td>${escapeHtml(l.price_date || "")}${l.price_stale ? " ⚠≥6мес" : ""}</td></tr>`;
+  const rowsXml = []; let rn = 0;
+  const cellS = (ci, v) => (v === "" || v == null) ? "" : `<c r="${_xlCol(ci)}${rn}" t="inlineStr"><is><t xml:space="preserve">${_xlEsc(_xlGuard(String(v)))}</t></is></c>`;
+  const cellN = (ci, v) => `<c r="${_xlCol(ci)}${rn}"><v>${num(v)}</v></c>`;
+  const row = (cells) => { rn++; rowsXml.push(`<row r="${rn}">${cells.map((c, i) => c.n ? cellN(i, c.v) : cellS(i, c.v)).join("")}</row>`); };
+  const S = (v) => ({ v }); const N = (v) => ({ v, n: true });
+
+  row([S(r.project_name)]);
+  row([S(`${r.object_type} · ${r.city} · ${r.precision_class} · ${r.generated_at}`)]);
+  row(["№", "Конструктив", "Работа / ресурс", "Норма", "Ед.", "Объём", "Материал", "Работа", "Машины", "Итого ₸", "Источник", "Дата цен"].map(S));
+  (r.lines || []).forEach((l) => {
+    row([S(l.no), S(l.section), S(l.title), S(l.norm), S(l.unit), N(l.quantity), N(l.material_price), N(l.labor_price), N(l.machine_price), N(l.total),
+      S((SRC_LABEL && SRC_LABEL[l.price_source]) || l.price_source || ""), S((l.price_date || "") + (l.price_stale ? " ≥6мес" : ""))]);
     (l.resources || []).forEach((res) => {
       const q = num(res.consumption) * num(l.quantity);
-      h += `<tr class="res"><td></td><td></td>
-        <td class="ri">${escapeHtml(res.name)} (${escapeHtml(KIND_LABEL[res.kind] || res.kind)})</td>
-        <td></td><td>${escapeHtml(res.unit)}</td><td class="n">${q}</td>
-        <td class="n">${num(res.price)}</td><td></td><td></td><td class="n">${Math.round(q * num(res.price))}</td>
-        <td>${escapeHtml(res.source || "")}</td><td>${escapeHtml(res.updated_at || "")}</td></tr>`;
+      row([S(""), S(""), S(`${res.name} (${KIND_LABEL[res.kind] || res.kind})`), S(""), S(res.unit), N(q), N(res.price), S(""), S(""), N(Math.round(q * num(res.price))), S(res.source || ""), S(res.updated_at || "")]);
     });
-    return h;
-  }).join("");
-  const totRow = (label, val, bold) => `<tr><td colspan="11" style="border:none${bold ? ";font-weight:bold" : ""}">${label}</td><td class="n"${bold ? ' style="font-weight:bold"' : ""}>${num(val)}</td></tr>`;
-  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-    xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-    <head><meta charset="utf-8">
-    <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
-      <x:Name>Смета</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
-    </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-    <style>
-      td, th { border: 0.5pt solid #999; padding: 2px 6px; font-family: Calibri, sans-serif; font-size: 11px; vertical-align: top; }
-      th { background: #DDE6F2; font-weight: bold; }
-      td.n, th.n { mso-number-format:"\\#\\,\\#\\#0"; text-align: right; }
-      tr.res td { color: #666; font-size: 10px; }
-      td.ri { padding-left: 16px; }
-    </style></head>
-    <body>
-      <table><tr><td colspan="12" style="border:none;font-weight:bold;font-size:14px">${escapeHtml(r.project_name)}</td></tr>
-      <tr><td colspan="12" style="border:none;font-size:10px;color:#444">${escapeHtml(r.object_type)} · ${escapeHtml(r.city)} · ${escapeHtml(r.precision_class)} · ${escapeHtml(r.generated_at)}</td></tr></table>
-      <table><thead><tr>
-        <th>№</th><th>Конструктив</th><th>Работа / ресурс</th><th>Норма</th><th>Ед.</th>
-        <th class="n">Объём</th><th class="n">Материал</th><th class="n">Работа</th><th class="n">Машины</th><th class="n">Итого, ₸</th>
-        <th>Источник</th><th>Дата цен</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-      <table>
-        ${totRow("Прямые затраты", t.direct)}
-        ${totRow(`Накладные (${num(t.overhead_pct)}%)`, t.overhead)}
-        ${totRow(`Резерв (${num(t.contingency_pct)}%)`, t.contingency)}
-        ${totRow(`НДС (${num(t.vat_pct)}%)`, t.vat)}
-        ${totRow("ИТОГО с НДС", t.grand_total, true)}
-      </table>
-    </body></html>`;
-  const blob = new Blob(["﻿", html], { type: "application/vnd.ms-excel" });
+  });
+  const totRow = (label, val) => row([S(label), S(""), S(""), S(""), S(""), S(""), S(""), S(""), S(""), N(val)]);
+  totRow("Прямые затраты", t.direct); totRow(`Накладные (${num(t.overhead_pct)}%)`, t.overhead);
+  totRow(`Резерв (${num(t.contingency_pct)}%)`, t.contingency); totRow(`НДС (${num(t.vat_pct)}%)`, t.vat);
+  totRow("ИТОГО с НДС", t.grand_total);
+
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml.join("")}</sheetData></worksheet>`;
+  const files = [
+    { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>` },
+    { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: "xl/workbook.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Смета" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+    { name: "xl/_rels/workbook.xml.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>` },
+    { name: "xl/worksheets/sheet1.xml", data: sheet },
+  ];
+  const blob = new Blob([_zipStore(files)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "smeta_" + (r.project_name || "obj").replace(/[^\wа-яё-]+/gi, "_").slice(0, 40) +
-    "_" + new Date().toISOString().slice(0, 10) + ".xls";
+    "_" + new Date().toISOString().slice(0, 10) + ".xlsx";
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -1143,7 +1151,12 @@ async function viewSettings() {
       <div class="card">
         <div class="hint" style="margin-bottom:8px">Свои цены имеют приоритет над сидовыми/рыночными в расчёте (по ключу работы + коду ресурса). work_key — как в расчёте (напр. frame_concrete, roof).</div>
         <div id="bmList">${benchmarkRows(benchmark)}</div>
-        <div class="grid bm-form" style="margin-top:10px">
+        <div class="row-actions" style="margin:10px 0">
+          <label class="btn" style="cursor:pointer">Загрузить CSV-справочник<input type="file" id="bmCsv" accept=".csv,text/csv" style="display:none"></label>
+          <span class="fm-hint">Колонки: work_key,code,name,kind,unit,consumption,price[,region]. price_level/источник проставятся «бенчмарк».</span>
+        </div>
+        <div class="hint" style="margin:6px 0">Или добавить одну позицию вручную:</div>
+        <div class="grid bm-form" style="margin-top:6px">
           <div class="field"><label>work_key</label><input id="bmWorkKey" placeholder="frame_concrete"></div>
           <div class="field"><label>Код ресурса</label><input id="bmCode" placeholder="concrete_b25"></div>
           <div class="field"><label>Название</label><input id="bmName" placeholder="Бетон B25"></div>
@@ -1248,6 +1261,16 @@ async function viewSettings() {
     if (!body.work_key || !body.code || !body.unit) { toast("Заполните work_key, код и единицу", true); return; }
     try { await Api.addBenchmark(body); toast("Добавлено в справочник"); viewSettings(); }
     catch (e) { toast(e.detail || "Ошибка", true); }
+  });
+  const bmCsv = document.getElementById("bmCsv");
+  if (bmCsv) bmCsv.addEventListener("change", async () => {
+    const file = bmCsv.files && bmCsv.files[0];
+    if (!file) return;
+    try {
+      const rep = await Api.importBenchmark(await file.text());
+      toast(`Загружено: +${rep.inserted}, обновлено ${rep.updated}, брак ${rep.skipped}`, rep.skipped > 0);
+      viewSettings();
+    } catch (e) { toast(e.detail || "Ошибка загрузки CSV", true); }
   });
   document.querySelectorAll("[data-bm-del]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Удалить позицию из справочника?")) return;

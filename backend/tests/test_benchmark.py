@@ -11,18 +11,40 @@ _AUTH = "Basic " + base64.b64encode(b"admin:admin12345").decode()
 client = TestClient(app, headers={"Authorization": _AUTH})
 
 
-def test_benchmark_overrides_seed_in_snapshot(db):
-    # бенчмарк-цена перебивает сидовую; чистим за собой (общая сессия БД)
-    row = WorkResource(work_key="frame_concrete", code="bench_concrete",
-                       name="Бетон (бенчмарк)", kind="material", unit="м³",
-                       consumption=1.0, price=99999, region="KZ",
-                       price_level=BENCHMARK_PRICE_LEVEL, source="benchmark")
+def test_benchmark_overlays_by_code_keeps_rest(db):
+    # Бенчмарк ОДНОГО кода перекрывает его цену, остальной состав работы сохраняется.
+    base = db_snapshot_for(db, "frame_concrete", "KZ")
+    assert len(base) >= 2
+    code0 = base[0].code
+    row = WorkResource(work_key="frame_concrete", code=code0, name=base[0].name,
+                       kind=base[0].kind, unit=base[0].unit, consumption=base[0].consumption,
+                       price=88888, region="KZ", price_level=BENCHMARK_PRICE_LEVEL,
+                       source="benchmark")
     db.add(row)
     db.commit()
     try:
         res = db_snapshot_for(db, "frame_concrete", "KZ")
-        assert any(r.code == "bench_concrete" for r in res)
-        assert all(r.source == "benchmark" for r in res)  # бенчмарк all-or-nothing
+        assert len(res) == len(base)  # состав не схлопнулся
+        over = next(r for r in res if r.code == code0)
+        assert over.price == 88888 and over.source == "benchmark"
+        # прочие ресурсы остались сидовыми
+        assert any(r.code != code0 and r.source != "benchmark" for r in res)
+    finally:
+        db.delete(row)
+        db.commit()
+
+
+def test_benchmark_adds_new_code(db):
+    base = db_snapshot_for(db, "frame_concrete", "KZ")
+    row = WorkResource(work_key="frame_concrete", code="bench_new", name="Доп. ресурс",
+                       kind="material", unit="м³", consumption=0.1, price=5000,
+                       region="KZ", price_level=BENCHMARK_PRICE_LEVEL, source="benchmark")
+    db.add(row)
+    db.commit()
+    try:
+        res = db_snapshot_for(db, "frame_concrete", "KZ")
+        assert len(res) == len(base) + 1
+        assert any(r.code == "bench_new" for r in res)
     finally:
         db.delete(row)
         db.commit()
@@ -37,7 +59,7 @@ def test_benchmark_crud_requires_auth():
 
 def test_benchmark_add_list_delete():
     r = client.post("/api/benchmark", json={
-        "work_key": "test_bm_work", "code": "bm_roof", "name": "Кровля бенчмарк",
+        "work_key": "roof", "code": "bm_roof", "name": "Кровля бенчмарк",
         "kind": "material", "unit": "м²", "consumption": 1.0, "price": 8500, "region": "KZ"})
     assert r.status_code == 200
     rid = r.json()["id"]
