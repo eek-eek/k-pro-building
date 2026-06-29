@@ -316,7 +316,8 @@ async function viewDetail(id) {
         ${statusBadge(calculated ? "calculated" : "draft")}
         <div class="toolbar">
           ${calculated ? `<select class="ver-select" id="verSel" title="Версии"></select>
-          <button class="btn sm" id="exportBtn">Экспорт Word</button>` : ""}
+          <button class="btn sm" id="exportBtn">Экспорт Word</button>
+          <button class="btn sm" id="exportXlsxBtn">Экспорт Excel</button>` : ""}
         </div>
       </div>
       <div class="sub-mono">№ ${id} · ${escapeHtml((inp && inp.city) || data.estimate.city || "—")}${
@@ -356,6 +357,7 @@ async function viewDetail(id) {
     renderResult(cv.result);
     buildVersionSelector(id);
     document.getElementById("exportBtn").addEventListener("click", () => exportDocx(cv.result));
+    document.getElementById("exportXlsxBtn").addEventListener("click", () => exportXlsx(cv.result));
     // редактируемый 3D-макет: обновляется при правке габарита/этажности/формы в исходных данных
     const drawSmetaMassing = async () => {
       await ensureThree();
@@ -978,6 +980,64 @@ function exportDocx(r) {
   a.href = URL.createObjectURL(blob);
   a.download = "smeta_" + (r.project_name || "obj").replace(/[^\wа-яё-]+/gi, "_").slice(0, 40) +
     "_" + new Date().toISOString().slice(0, 10) + ".doc";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Excel export (.xls via Office-Excel HTML; числа — реальные, для расчётов) ──
+function exportXlsx(r) {
+  const t = r.totals || {};
+  const num = (v) => (Number(v) || 0);
+  const rows = (r.lines || []).map((l) => {
+    let h = `<tr>
+      <td>${escapeHtml(l.no)}</td><td>${escapeHtml(l.section || "")}</td><td>${escapeHtml(l.title)}</td>
+      <td>${escapeHtml(l.norm || "")}</td><td>${escapeHtml(l.unit)}</td>
+      <td class="n">${num(l.quantity)}</td><td class="n">${num(l.material_price)}</td>
+      <td class="n">${num(l.labor_price)}</td><td class="n">${num(l.machine_price)}</td>
+      <td class="n">${num(l.total)}</td></tr>`;
+    (l.resources || []).forEach((res) => {
+      const q = num(res.consumption) * num(l.quantity);
+      h += `<tr class="res"><td></td><td></td>
+        <td class="ri">${escapeHtml(res.name)} (${escapeHtml(KIND_LABEL[res.kind] || res.kind)})</td>
+        <td></td><td>${escapeHtml(res.unit)}</td><td class="n">${q}</td>
+        <td class="n">${num(res.price)}</td><td></td><td></td><td class="n">${Math.round(q * num(res.price))}</td></tr>`;
+    });
+    return h;
+  }).join("");
+  const totRow = (label, val, bold) => `<tr><td colspan="9" style="border:none${bold ? ";font-weight:bold" : ""}">${label}</td><td class="n"${bold ? ' style="font-weight:bold"' : ""}>${num(val)}</td></tr>`;
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="utf-8">
+    <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+      <x:Name>Смета</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+    </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+    <style>
+      td, th { border: 0.5pt solid #999; padding: 2px 6px; font-family: Calibri, sans-serif; font-size: 11px; vertical-align: top; }
+      th { background: #DDE6F2; font-weight: bold; }
+      td.n, th.n { mso-number-format:"\\#\\,\\#\\#0"; text-align: right; }
+      tr.res td { color: #666; font-size: 10px; }
+      td.ri { padding-left: 16px; }
+    </style></head>
+    <body>
+      <table><tr><td colspan="10" style="border:none;font-weight:bold;font-size:14px">${escapeHtml(r.project_name)}</td></tr>
+      <tr><td colspan="10" style="border:none;font-size:10px;color:#444">${escapeHtml(r.object_type)} · ${escapeHtml(r.city)} · ${escapeHtml(r.precision_class)} · ${escapeHtml(r.generated_at)}</td></tr></table>
+      <table><thead><tr>
+        <th>№</th><th>Конструктив</th><th>Работа / ресурс</th><th>Норма</th><th>Ед.</th>
+        <th class="n">Объём</th><th class="n">Материал</th><th class="n">Работа</th><th class="n">Машины</th><th class="n">Итого, ₸</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <table>
+        ${totRow("Прямые затраты", t.direct)}
+        ${totRow(`Накладные (${num(t.overhead_pct)}%)`, t.overhead)}
+        ${totRow(`Резерв (${num(t.contingency_pct)}%)`, t.contingency)}
+        ${totRow(`НДС (${num(t.vat_pct)}%)`, t.vat)}
+        ${totRow("ИТОГО с НДС", t.grand_total, true)}
+      </table>
+    </body></html>`;
+  const blob = new Blob(["﻿", html], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "smeta_" + (r.project_name || "obj").replace(/[^\wа-яё-]+/gi, "_").slice(0, 40) +
+    "_" + new Date().toISOString().slice(0, 10) + ".xls";
   a.click();
   URL.revokeObjectURL(a.href);
 }
