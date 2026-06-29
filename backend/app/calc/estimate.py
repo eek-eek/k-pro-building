@@ -169,6 +169,18 @@ def build_estimate(
             if vol is None or vol.quantity <= 0:
                 continue
             resources = db_snapshot_for(db, key, region)
+            psource, pdate, pstale, pfactor = _line_price_meta(resources, today, inflation_pct)
+            if pstale:
+                stale_count += 1
+            comment = "требует проверки сметчиком" if vol.needs_review else ""
+            if pfactor != 1.0:
+                inflated = True
+                comment = (comment + "; " if comment else "") + \
+                    f"цены проиндексированы ×{pfactor:g} (инфляция, цены от {pdate})"
+                # Индексируем ЦЕНЫ РЕСУРСОВ (не агрегат) — иначе свёртка при пересчёте
+                # вернёт исходные цены и потеряет индексацию.
+                for res in resources:
+                    res.price = round(res.price * pfactor)
             if resources:
                 material_price, labor_price, machine_price = rollup(resources)
             else:
@@ -176,17 +188,10 @@ def build_estimate(
                 material_price, labor_price, machine_price = (
                     price.material, price.labor, price.machine
                 )
-            psource, pdate, pstale, pfactor = _line_price_meta(resources, today, inflation_pct)
-            if pstale:
-                stale_count += 1
-            comment = "требует проверки сметчиком" if vol.needs_review else ""
-            if pfactor != 1.0:  # устаревшие цены проиндексированы на инфляцию
-                material_price = round(material_price * pfactor)
-                labor_price = round(labor_price * pfactor)
-                machine_price = round(machine_price * pfactor)
-                inflated = True
-                comment = (comment + "; " if comment else "") + \
-                    f"цены проиндексированы ×{pfactor:g} (инфляция, цены от {pdate})"
+                if pfactor != 1.0:  # без-ресурсная строка — индексируем агрегат
+                    material_price = round(material_price * pfactor)
+                    labor_price = round(labor_price * pfactor)
+                    machine_price = round(machine_price * pfactor)
             unit_cost = material_price + labor_price + machine_price
             splits = SPLIT_SPECS.get(key)
             if splits:
