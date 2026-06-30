@@ -70,6 +70,7 @@ const Api = {
   generateForm: (description, base) => api("POST", "/building-form/generate", { description, base }),
   checkZone: (id) => api("POST", `/objects/${id}/check-zone`),
   zoningWms: (city) => api("GET", `/zoning/wms?city=${encodeURIComponent(city)}`),
+  zoningFaults: () => api("GET", "/zoning/faults"),
   verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
@@ -1456,6 +1457,7 @@ async function viewObject(id) {
       <div class="detail"><div class="left">
         <div id="omap" class="map-mini"></div>
         <div id="zoneBox"></div>
+        <div id="faultBox"></div>
         <div id="conceptBox"></div>
         <div class="card"><h3>Сметы объекта</h3><div id="objEsts"></div></div>
       </div></div>
@@ -1480,6 +1482,14 @@ async function viewObject(id) {
     const gj = L.geoJSON(data.polygon, { style: { color: "#2C5BA8", weight: 2 } }).addTo(map);
     map.fitBounds(gj.getBounds(), { padding: [20, 20] });
   } else { L.marker([o.lat, o.lon]).addTo(map); }
+  // ориентировочный слой тектонических разломов (красный пунктир)
+  try {
+    const faultsGj = await Api.zoningFaults();
+    L.geoJSON(faultsGj, {
+      style: { color: "#C0392B", weight: 3, dashArray: "6 5", opacity: 0.85 },
+      onEachFeature: (f, layer) => layer.bindTooltip(f.properties && f.properties.name || "разлом"),
+    }).addTo(map);
+  } catch (e) { /* слой разломов не критичен */ }
 
   document.getElementById("objTitle").addEventListener("change", async (ev) => {
     await Api.patchObject(id, { name: ev.target.value }); toast("Сохранено");
@@ -1497,7 +1507,30 @@ async function viewObject(id) {
     r.addEventListener("click", () => { location.hash = `#/estimate/${r.dataset.eid}`; }));
 
   renderZone(id, o);
-  await renderConcept(id, o.city, data.estimates);
+  renderFaults(data.faults);
+  await renderConcept(id, o.city, data.estimates, data.faults);
+}
+
+function faultBadge(status) {
+  const map = { ok: ["ok", "разломов нет"], caution: ["draft", "повышенный риск"], avoid: ["rejected", "не рекомендуется"] };
+  const [cls, label] = map[status] || map.ok;
+  return `<span class="sbadge ${cls}">${label}</span>`;
+}
+
+function renderFaults(f) {
+  const box = document.getElementById("faultBox");
+  if (!box) return;
+  if (!f) { box.innerHTML = ""; return; }
+  const rows = [];
+  if (f.nearest_fault)
+    rows.push(`<div class="meta">Ближайший разлом: <b>${escapeHtml(f.nearest_fault)}</b> · ~${money(f.distance_m)} м</div>`);
+  rows.push(`<div class="meta">Сейсмичность: <b>${f.intensity} баллов</b>${
+    f.max_floors ? ` · рекоменд. этажность ≤ <b>${f.max_floors}</b>` : " · ограничений по высоте нет"}</div>`);
+  if (f.note) rows.push(`<div class="zone-warn">⚠ ${escapeHtml(f.note)}</div>`);
+  rows.push(`<div class="meta muted">Источник: ${escapeHtml(f.source || "")}</div>`);
+  box.innerHTML = `<div class="concept-panel"><h3>Сейсмика и разломы</h3>
+    <div class="zone-line">${faultBadge(f.status)}</div>
+    <div>${rows.join("")}</div></div>`;
 }
 
 function zoneBadge(status) {
@@ -1535,9 +1568,10 @@ function renderZone(id, o) {
   });
 }
 
-async function renderConcept(id, city, estimates) {
+async function renderConcept(id, city, estimates, faults) {
   const box = document.getElementById("conceptBox");
   const has = estimates && estimates.length ? estimates[0] : null;
+  const floorCap = faults && faults.max_floors ? faults.max_floors : null;
   const formOpts = BUILDING_FORMS.map((f) => `<option value="${f.key}">${f.label}</option>`).join("");
   box.innerHTML = `<div class="concept-panel"><h3>Концепт здания</h3>
     ${has ? `<div class="zone-warn">Для объекта уже создана смета «${escapeHtml(has.name)}» (№${has.id}).
@@ -1549,6 +1583,7 @@ async function renderConcept(id, city, estimates) {
       <button class="btn" id="cReload">Предложить</button>
     </div>
     <div id="cFields" class="hint">Нажмите «Предложить», чтобы система рассчитала параметры под участок.</div>
+    <div id="faultFloorWarn"></div>
     <div class="row-actions" style="margin-bottom:8px"><button class="btn" id="cGenForm" disabled>✨ Сгенерировать форму (ИИ)</button></div>
     <div id="massing" class="massing"></div>
     <div class="row-actions"><button class="btn accent" id="cToEstimate" disabled>Создать смету</button></div>
@@ -1566,6 +1601,18 @@ async function renderConcept(id, city, estimates) {
   const recomputeTotal = () => {
     const el = totalField();
     if (el && !usingMassing()) el.value = maxTotal();
+  };
+  // Предупреждение по этажности от сейсмо/разломного скрининга (мягкое — не блокируем).
+  const checkFloorLimit = () => {
+    const warn = document.getElementById("faultFloorWarn");
+    if (!warn) return;
+    const el = document.querySelector('#cFields [data-ck="floors"]');
+    const floors = Number((el || {}).value || 0);
+    if (floorCap && floors > floorCap) {
+      warn.innerHTML = `<div class="zone-warn">⚠ Этажность ${floors} превышает рекомендованный
+        по сейсмике/разломам предел (${floorCap} эт.). Это повышает сейсмориск — снизьте высоту
+        или предусмотрите усиленную сейсмозащиту.</div>`;
+    } else { warn.innerHTML = ""; }
   };
   // Ручная правка площади — можно занизить, но не выше максимума.
   const clampTotal = () => {
@@ -1603,12 +1650,15 @@ async function renderConcept(id, city, estimates) {
       document.querySelectorAll("#cFields [data-ck]").forEach((el) => {
         if (el.dataset.ck === "total_area") {
           el.addEventListener("input", clampTotal);
+        } else if (el.dataset.ck === "floors") {
+          el.addEventListener("input", () => { recomputeTotal(); drawMassing(); checkFloorLimit(); });
         } else {
           el.addEventListener("input", () => { recomputeTotal(); drawMassing(); });
         }
       });
       snapFloorsToInt(document.querySelector('#cFields [data-ck="floors"]'));
       clampTotal();   // на загрузке: если предложенная площадь выше максимума — поджать
+      checkFloorLimit();
       drawMassing();
     } catch (e) {
       document.getElementById("cFields").innerHTML =

@@ -323,6 +323,17 @@ class ZoneVerdict(BaseModel):
     checked_at: Optional[str] = None
 
 
+class FaultVerdict(BaseModel):
+    """Оценка сейсмо/разломного риска точки застройки (ориентировочно)."""
+    status: str                       # ok | caution | avoid
+    nearest_fault: str = ""           # имя ближайшего разлома
+    distance_m: int = 0               # расстояние до него, м
+    intensity: int = 0                # сейсмическая интенсивность, баллы MSK-64
+    max_floors: Optional[int] = None  # рекомендуемый предел этажности (None — не лимитируется)
+    note: str = ""
+    source: str = ""
+
+
 class SuggestPricesRequest(BaseModel):
     source: str = "satu"
 

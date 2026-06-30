@@ -42,6 +42,7 @@ from ..schemas import (
 from ..settings_service import get_effective_settings, save_settings, mask_key, MODEL_CATALOG, test_provider as run_test_provider
 from ..versioning import create_version, summarize_diff
 from ..zoning import get_zoning_provider
+from ..zoning.faults import FAULTS, assess_faults
 from ..zoning.wfs import WFS_BASE, LAND_PLOTS, WATER_LAYER_BY_CITY
 
 router = APIRouter(prefix="/api")
@@ -680,6 +681,8 @@ def get_object(object_id: int, db: Session = Depends(get_db)) -> dict:
         "zone_kad_nomer": obj.zone_kad_nomer or "",
         "zone_note": obj.zone_note or "",
         "zone_checked_at": obj.zone_checked_at.isoformat(timespec="seconds") if obj.zone_checked_at else None,
+        # Сейсмо/разломный скрининг — чистая геометрия, считаем на лету (без хранения в БД).
+        "faults": assess_faults(obj.lat, obj.lon, obj.city).model_dump(),
         "estimates": [{"id": e.id, "name": e.name, "status": e.status,
                        "total": (e.current_version.total if e.current_version else 0.0)}
                       for e in ests],
@@ -782,3 +785,9 @@ def zoning_wms(city: str = "Алматы") -> dict:
     if water:
         layers.append(water)
     return {"url": WFS_BASE, "layers": ",".join(layers), "format": "image/png", "transparent": True}
+
+
+@router.get("/zoning/faults")
+def zoning_faults() -> dict:
+    """Ориентировочный слой тектонических разломов (GeoJSON) для отрисовки на карте."""
+    return FAULTS
