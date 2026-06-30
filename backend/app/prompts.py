@@ -38,12 +38,18 @@ PROMPT_DEFAULTS: dict[str, dict[str, str]] = {
 
 
 def seed_prompts(db: Session) -> None:
-    existing = {p.key for p in db.scalars(select(Prompt)).all()}
+    existing = {p.key: p for p in db.scalars(select(Prompt)).all()}
     for key, meta in PROMPT_DEFAULTS.items():
-        if key not in existing:
+        row = existing.get(key)
+        if row is None:
             db.add(Prompt(key=key, title=meta["title"],
                           description=meta["description"], body=meta["body"],
                           is_custom=False))
+        elif not row.is_custom:
+            # Незаказные промпты держим синхронными с дефолтом в коде: правка дефолта
+            # (новые нормы — напр. Строительный кодекс) применяется на следующем старте.
+            # Промпты, отредактированные пользователем (is_custom=True), не трогаем.
+            row.title, row.description, row.body = meta["title"], meta["description"], meta["body"]
     db.commit()
 
 

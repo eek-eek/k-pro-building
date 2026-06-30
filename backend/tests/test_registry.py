@@ -1,4 +1,14 @@
-from app.norms.registry import SEED_DOCUMENTS
+from app.norms.registry import SEED_DOCUMENTS, documents_for
+
+
+def test_construction_code_registered_for_every_object_type():
+    # Строительный кодекс №253-VIII — рамочный, применим к любому типу объекта.
+    for ot in ("Жилой дом", "Офис", "Производственный объект", "Реконструкция / ремонт"):
+        codes = [c for c, *_ in documents_for(ot)]
+        assert any("Строительный кодекс" in c for c in codes), ot
+    # и официальная ссылка adilet на месте
+    kodeks = [d for d in SEED_DOCUMENTS if "Строительный кодекс" in d[0]]
+    assert kodeks and "adilet.zan.kz/rus/docs/K2600000253" in kodeks[0][3]
 
 
 def test_no_known_broken_perechen_urls():
