@@ -342,6 +342,19 @@ def verify_norms(estimate_id: int, db: Session = Depends(get_db)) -> dict:
     }
 
 
+@router.post("/estimates/{estimate_id}/audit")
+def audit_estimate_api(estimate_id: int, db: Session = Depends(get_db)) -> dict:
+    """Аудит сметы «резервным провайдером»: цена (отклонение от эталона), объём
+    (против нормы) — детерминированно; полнота (пропуски) — правила + резервный LLM.
+    Смету не изменяет, возвращает структурированный отчёт находок."""
+    from ..calc.estimate_audit import audit_estimate
+
+    est = db.get(Estimate, estimate_id)
+    if est is None or est.current_version is None:
+        raise HTTPException(status_code=404, detail="estimate not calculated")
+    return to_jsonable(audit_estimate(db, est))
+
+
 @router.get("/estimates/{estimate_id}/recommendations")
 def list_recommendations(estimate_id: int, db: Session = Depends(get_db)) -> list[dict]:
     """Ещё не учтённые типовые позиции по нормам РК с уже рассчитанной стоимостью."""
@@ -558,6 +571,7 @@ def get_settings_api(db: Session = Depends(get_db),
         "price_inflation_annual_pct": eff.price_inflation_annual_pct,
         "labor_tariff_enabled": eff.labor_tariff_enabled,
         "labor_tariff_index": eff.labor_tariff_index,
+        "material_revision_enabled": eff.material_revision_enabled,
         "catalog": MODEL_CATALOG,
         # Ключи/модели по каждому провайдеру — чтобы фронт показывал и правил
         # именно выбранного провайдера (а не подставлял ключ активного для всех).
@@ -589,6 +603,8 @@ def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db),
         updates["labor_tariff_enabled"] = body.labor_tariff_enabled
     if body.labor_tariff_index is not None:
         updates["labor_tariff_index"] = max(0.1, body.labor_tariff_index)
+    if body.material_revision_enabled is not None:
+        updates["material_revision_enabled"] = body.material_revision_enabled
     # Ключ обновляем только если прислали непустое РЕАЛЬНОЕ значение.
     # Маскированную строку (содержит «•») игнорируем — иначе в БД попадёт мусор
     # (напр. при переключении провайдера в UI поле могло держать чужой masked-ключ).

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     price_inflation_annual_pct: float = 0.0  # годовая инфляция для устаревших цен (0 = выкл)
     labor_tariff_enabled: bool = True   # ставки труда по тарифам SADI (регион+разряд) в расчёте
     labor_tariff_index: float = 1.0     # индекс тарифов 2016→год расчёта (шкалы близки, дефолт 1.0)
+    material_revision_enabled: bool = True  # ревизия цен материалов по SADI (метод K=2.41)
 
     # Админ-доступ (Настройки/Промпты). На проде ОБЯЗАТЕЛЬНО задать ADMIN_PASSWORD
     # в .env — дефолт ниже только для локальной разработки.

@@ -230,6 +230,24 @@ class EstimateResult(BaseModel):
     llm_narrative: str = ""  # опциональный текст от LLM
 
 
+# ─────────────────────────── Аудит сметы ───────────────────────────
+class AuditFinding(BaseModel):
+    case: str            # price | volume | completeness
+    severity: str        # низкий | средний | высокий
+    title: str
+    detail: str = ""
+    recommendation: str = ""
+
+
+class AuditReport(BaseModel):
+    findings: list[AuditFinding] = Field(default_factory=list)
+    checked_lines: int = 0
+    llm_used: bool = False        # запускался ли резервный провайдер (кейс 2)
+    llm_provider: str = ""
+    note: str = ""                # почему LLM-часть не выполнилась (мягкая деградация)
+    summary: str = ""
+
+
 # ─────────────────────────── Задачи / статусы ───────────────────────────
 class JobStep(BaseModel):
     key: str
@@ -364,6 +382,7 @@ class SettingsUpdate(BaseModel):
     price_inflation_annual_pct: Optional[float] = None
     labor_tariff_enabled: Optional[bool] = None
     labor_tariff_index: Optional[float] = None
+    material_revision_enabled: Optional[bool] = None
 
 
 class TestConnectionRequest(BaseModel):

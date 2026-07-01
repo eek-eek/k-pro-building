@@ -453,6 +453,25 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
   padding: 14px 20px; border-top: 1px solid var(--line);
 }
 
+/* ── Аудит сметы ── */
+.audit-ok { color: var(--ok); font-weight: 600; padding: 8px 0; }
+.audit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.af { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line);
+  border-left-width: 3px; border-radius: 8px; background: var(--surface); }
+.af.hi { border-left-color: var(--danger); }
+.af.mid { border-left-color: var(--warn); }
+.af.lo { border-left-color: var(--text-3); }
+.af-sev { flex: 0 0 auto; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 7px; border-radius: 10px; margin-top: 1px; }
+.af.hi .af-sev { background: var(--danger-bg); color: var(--danger); }
+.af.mid .af-sev { background: var(--warn-bg); color: var(--warn); }
+.af.lo .af-sev { background: var(--draft-bg); color: var(--draft); }
+.af-title { font-weight: 600; font-size: 14px; }
+.af-case { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3);
+  border: 1px solid var(--line-2); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
+.af-detail { color: var(--text-2); font-size: 13px; margin-top: 3px; }
+.af-rec { color: var(--accent); font-size: 13px; margin-top: 4px; }
+
 /* ── Справочник материалов / тарифы (SADI) ── */
 .mat-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .mat-controls #matQ { flex: 1 1 320px; min-width: 240px; }

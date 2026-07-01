@@ -47,6 +47,7 @@ def _reset_cross_check_settings():
     s = SessionLocal()
     try:
         save_settings(s, {"cross_check_enabled": False, "cross_check_provider": "openai",
-                          "labor_tariff_enabled": True, "labor_tariff_index": 1.0})
+                          "labor_tariff_enabled": True, "labor_tariff_index": 1.0,
+                          "material_revision_enabled": True})
     finally:
         s.close()

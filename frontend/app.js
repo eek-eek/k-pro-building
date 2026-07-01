@@ -72,6 +72,7 @@ const Api = {
   zoningWms: (city) => api("GET", `/zoning/wms?city=${encodeURIComponent(city)}`),
   zoningFaults: () => api("GET", "/zoning/faults"),
   verifyNorms: (id) => api("POST", `/estimates/${id}/verify-norms`),
+  auditEstimate: (id) => api("POST", `/estimates/${id}/audit`),
   listVersions: (id) => api("GET", `/estimates/${id}/versions`),
   rollback: (id, version_number) => api("POST", `/estimates/${id}/rollback`, { version_number }),
   listChat: (id) => api("GET", `/estimates/${id}/chat`),
@@ -702,6 +703,12 @@ function renderResult(r) {
       <span class="hint">Раскройте строку (▸) — правьте ресурсы (расход/цена), добавляйте «+ ресурс». Сервер пересчитает итоги и создаст версию.</span>
     </div></div>`);
   parts.push(renderTotals(r.totals));
+  parts.push(`<div class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <h3 style="margin:0">Проверка сметы</h3>
+      <button class="btn sm" id="auditBtn" style="margin-left:auto" title="Резервный провайдер проверяет цены, объёмы и полноту">Проверить смету</button></div>
+    <div class="hint">Цены (отклонение от эталона) и объёмы (против нормы) — детерминированно; плюс резервный провайдер (рассуждающая модель) ищет любые расхождения: пропуски, лишнее, несоответствия типу объекта, подозрительные объёмы/пропорции, ценовые аномалии (нужен ключ и выбранный проверяющий провайдер в Настройках).</div>
+    <div id="auditResults"></div></div>`);
   parts.push(`<div id="recsCard"></div>`);
   document.getElementById("result").innerHTML = parts.join("");
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
@@ -709,8 +716,48 @@ function renderResult(r) {
   if (satuBtn) satuBtn.addEventListener("click", suggestSatuPrices);
   const vnBtn = document.getElementById("verifyNormsBtn");
   if (vnBtn) vnBtn.addEventListener("click", verifyNorms);
+  const auditBtn = document.getElementById("auditBtn");
+  if (auditBtn) auditBtn.addEventListener("click", runAudit);
   wireTable();
   loadRecs();
+}
+
+const AUDIT_CASE = { price: "цена", volume: "объём", completeness: "полнота" };
+const AUDIT_SEV = { "высокий": "hi", "средний": "mid", "низкий": "lo" };
+
+function renderAudit(rep) {
+  const el = document.getElementById("auditResults");
+  if (!el) return;
+  if (!rep.findings.length) {
+    el.innerHTML = `<div class="audit-ok">✓ ${escapeHtml(rep.summary)}</div>`;
+    return;
+  }
+  const meta = rep.llm_used ? ` · анализ ИИ: ${escapeHtml(rep.llm_provider)}`
+    : (rep.note ? ` · анализ ИИ пропущен: ${escapeHtml(rep.note)}` : "");
+  el.innerHTML = `<div class="hint" style="margin:10px 0 6px">${escapeHtml(rep.summary)}${meta}</div>` +
+    `<ul class="audit-list">` + rep.findings.map((f) => `<li class="af ${AUDIT_SEV[f.severity] || "lo"}">
+      <span class="af-sev">${escapeHtml(f.severity)}</span>
+      <div class="af-body">
+        <div class="af-title"><span class="af-case">${escapeHtml(AUDIT_CASE[f.case] || f.case)}</span> ${escapeHtml(f.title)}</div>
+        ${f.detail ? `<div class="af-detail">${escapeHtml(f.detail)}</div>` : ""}
+        ${f.recommendation ? `<div class="af-rec">→ ${escapeHtml(f.recommendation)}</div>` : ""}
+      </div></li>`).join("") + `</ul>`;
+}
+
+async function runAudit() {
+  const btn = document.getElementById("auditBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Проверяю…"; }
+  try {
+    const rep = await Api.auditEstimate(DETAIL.id);
+    renderAudit(rep);
+    const hi = rep.findings.filter((f) => f.severity === "высокий").length;
+    toast(rep.findings.length ? `Аудит: ${rep.findings.length} замечаний${hi ? `, высокий риск: ${hi}` : ""}`
+      : "Аудит: существенных отклонений не найдено", hi > 0);
+  } catch (e) {
+    toast(e.detail || "Ошибка аудита сметы", true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Проверить смету"; }
+  }
 }
 
 async function verifyNorms() {
@@ -1398,6 +1445,7 @@ async function viewSettings() {
         <div class="field"><label>Индекс тарифов труда (2016 → сейчас)</label>
           <input type="number" step="0.05" min="0.1" id="laborTariffIndex" value="${escapeAttr(s.labor_tariff_index ?? 1)}">
           <div class="hint">Труд считается по тарифной ставке ₸/чел-ч региона × индекс. 1.0 — шкала 2016 ≈ рынок 2026. Выкл — цены труда из сид-каталога.</div></div>
+        <div class="checks"><label><input type="checkbox" id="materialRevision" ${s.material_revision_enabled ? "checked" : ""}> Ревизия цен материалов по SADI (заниженные — до SADI; без цены — ×2.41)</label></div>
         <div class="row-actions">
           <button class="btn primary" id="saveSettings">Сохранить</button>
           <button class="btn" id="testConn">Проверить соединение</button>
@@ -1452,6 +1500,7 @@ async function viewSettings() {
       price_inflation_annual_pct: Math.max(0, Number(document.getElementById("inflation").value || 0)),
       labor_tariff_enabled: document.getElementById("laborTariff").checked,
       labor_tariff_index: Math.max(0.1, Number(document.getElementById("laborTariffIndex").value || 1)),
+      material_revision_enabled: document.getElementById("materialRevision").checked,
     };
     const key = apiKeyEl.value.trim();
     if (key) body.api_key = key;   // шлём только реальный новый ключ (никогда masked)

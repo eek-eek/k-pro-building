@@ -24,9 +24,9 @@ def test_build_estimate_uses_db_no_regression(db):
     from app.schemas import BuildingInput
     from app.settings_service import save_settings
 
-    # проверяем паритет каталога БД↔код — тарифы труда SADI отключаем, чтобы они
-    # не переопределяли labor поверх сида (фикстура conftest вернёт дефолт).
-    save_settings(db, {"labor_tariff_enabled": False})
+    # проверяем паритет каталога БД↔код — тарифы труда и ревизию материалов SADI
+    # отключаем, чтобы они не переопределяли цены поверх сида (conftest вернёт дефолт).
+    save_settings(db, {"labor_tariff_enabled": False, "material_revision_enabled": False})
     inp = BuildingInput(demo_mode=True, use_search=False)
     profile = resolve_norm_profile(db, inp)
     r = build_estimate(db, inp, profile)

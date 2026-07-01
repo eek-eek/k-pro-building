@@ -15,6 +15,7 @@ from ..schemas import (
 from ..settings_service import get_effective_settings
 from .geometry import derive
 from .labor_tariff import apply_labor_tariffs, region_for_city, worker_rates
+from .material_revision import apply_material_revision
 from .pricing import get_price
 from .resource_catalog import db_snapshot_for, rollup
 from .volumes import compute_volumes
@@ -172,6 +173,8 @@ def build_estimate(
     tariff_rates = worker_rates(db, tariff_region) if tariff_region else {}
     tariff_index = eff.labor_tariff_index or 1.0
     tariff_applied = False
+    revise_materials = eff.material_revision_enabled
+    revision_applied = False
 
     works_lc = [w.lower() for w in inp.works if w.strip()]
     lines: list[EstimateLine] = []
@@ -192,6 +195,9 @@ def build_estimate(
             # поэтому не индексируется повторно; материалы/машины — как раньше).
             if apply_labor_tariffs(resources, tariff_rates, tariff_index, today_iso):
                 tariff_applied = True
+            # Ревизия цен материалов по SADI (штамп «сегодня» — инфляция не задваивает).
+            if revise_materials and apply_material_revision(resources, today_iso):
+                revision_applied = True
             # Пер-ресурсная индексация инфляции (мутирует цены ресурсов до свёртки —
             # переживает пересчёт; свежий ресурс не маскирует устаревшие).
             psource, pdate, pstale, p_inflated = _inflate_resources(resources, today, inflation_pct)
@@ -302,6 +308,11 @@ def build_estimate(
         warnings.append(
             f"Ставки труда — по сметным тарифам SADI (регион «{tariff_region}», "
             f"ред. 2016{idx}). Отключается в Настройках."
+        )
+    if revision_applied:
+        warnings.append(
+            "Цены части материалов ревизированы по каталогу SADI (заниженные подняты "
+            "до SADI; без цены в SADI — ×2.41). Отключается в Настройках."
         )
     if review_count:
         warnings.append(
