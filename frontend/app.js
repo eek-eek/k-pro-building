@@ -407,6 +407,7 @@ async function viewDetail(id) {
         ${statusBadge(calculated ? "calculated" : "draft")}
         <div class="toolbar">
           ${calculated ? `<select class="ver-select" id="verSel" title="Версии"></select>
+          <button class="btn sm accent" id="auditBtn" title="Резервный провайдер проверяет цены, объёмы и полноту">Проверить смету</button>
           <button class="btn sm" id="exportBtn">Экспорт Word</button>
           <button class="btn sm" id="exportXlsxBtn">Экспорт Excel</button>` : ""}
         </div>
@@ -444,6 +445,8 @@ async function viewDetail(id) {
   });
 
   document.getElementById("calcBtn").addEventListener("click", () => runCalc(id));
+  const auditTopBtn = document.getElementById("auditBtn");
+  if (auditTopBtn) auditTopBtn.addEventListener("click", runAudit);
   if (calculated) {
     renderResult(cv.result);
     buildVersionSelector(id);
@@ -667,6 +670,11 @@ async function saveGeneratedForm(id, boxes, floor_height) {
 function renderResult(r) {
   DETAIL.result = r;
   const parts = [];
+  // Аудит — вверху результата; запускается кнопкой «Проверить смету» в панели сверху.
+  parts.push(`<div class="card" id="auditCard">
+    <h3 style="margin:0 0 8px">Проверка сметы</h3>
+    <div class="hint">Цены (отклонение от эталона) и объёмы (против нормы) — детерминированно; плюс резервный провайдер (рассуждающая модель) ищет любые расхождения: пропуски, лишнее, несоответствия типу, подозрительные объёмы/пропорции, ценовые аномалии.</div>
+    <div id="auditResults"><div class="hint" style="margin-top:8px">Нажмите «Проверить смету» вверху страницы (рядом с кнопками экспорта).</div></div></div>`);
   if (r.warnings && r.warnings.length) {
     parts.push(`<div class="card"><h3>Предупреждения</h3><ul class="plain">` +
       r.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("") + `</ul></div>`);
@@ -703,12 +711,6 @@ function renderResult(r) {
       <span class="hint">Раскройте строку (▸) — правьте ресурсы (расход/цена), добавляйте «+ ресурс». Сервер пересчитает итоги и создаст версию.</span>
     </div></div>`);
   parts.push(renderTotals(r.totals));
-  parts.push(`<div class="card">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <h3 style="margin:0">Проверка сметы</h3>
-      <button class="btn sm" id="auditBtn" style="margin-left:auto" title="Резервный провайдер проверяет цены, объёмы и полноту">Проверить смету</button></div>
-    <div class="hint">Цены (отклонение от эталона) и объёмы (против нормы) — детерминированно; плюс резервный провайдер (рассуждающая модель) ищет любые расхождения: пропуски, лишнее, несоответствия типу объекта, подозрительные объёмы/пропорции, ценовые аномалии (нужен ключ и выбранный проверяющий провайдер в Настройках).</div>
-    <div id="auditResults"></div></div>`);
   parts.push(`<div id="recsCard"></div>`);
   document.getElementById("result").innerHTML = parts.join("");
   document.getElementById("saveEditBtn").addEventListener("click", saveManualEdit);
@@ -716,8 +718,6 @@ function renderResult(r) {
   if (satuBtn) satuBtn.addEventListener("click", suggestSatuPrices);
   const vnBtn = document.getElementById("verifyNormsBtn");
   if (vnBtn) vnBtn.addEventListener("click", verifyNorms);
-  const auditBtn = document.getElementById("auditBtn");
-  if (auditBtn) auditBtn.addEventListener("click", runAudit);
   wireTable();
   loadRecs();
 }
