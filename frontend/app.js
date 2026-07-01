@@ -87,6 +87,13 @@ const Api = {
   listPrompts: () => api("GET", "/prompts"),
   putPrompt: (key, body) => api("PUT", `/prompts/${key}`, { body }),
   resetPrompt: (key) => api("POST", `/prompts/${key}/reset`),
+  searchMaterials: (q, opts = {}) => api("GET", `/materials?q=${encodeURIComponent(q)}` +
+    `&limit=${opts.limit || 50}${opts.onlyPriced ? "&only_priced=true" : ""}` +
+    `${opts.category ? "&category=" + encodeURIComponent(opts.category) : ""}`),
+  materialCategories: () => api("GET", "/materials/categories"),
+  tariffs: (region, kind) => api("GET", `/tariffs?region=${encodeURIComponent(region || "")}` +
+    `${kind ? "&kind=" + encodeURIComponent(kind) : ""}`),
+  tariffRegions: () => api("GET", "/tariffs/regions"),
 };
 
 // ───────────────── building-input form schema ─────────────────
@@ -177,12 +184,13 @@ function parseRoute() {
   if (h.startsWith("/objects")) return { name: "objects" };
   if (h.startsWith("/estimates")) return { name: "estimates" };
   if (h.startsWith("/prices")) return { name: "prices" };
+  if (h.startsWith("/materials")) return { name: "materials" };
   if (h.startsWith("/settings")) return { name: "settings" };
   return { name: "home" };
 }
 function setActiveNav(route) {
   const map = { home: "#/", estimates: "#/estimates", detail: "#/estimates",
-    objects: "#/objects", object: "#/objects", settings: "#/settings" };
+    objects: "#/objects", object: "#/objects", materials: "#/materials", settings: "#/settings" };
   const target = map[route.name] || "#/";
   document.querySelectorAll(".nav a.link").forEach((a) =>
     a.classList.toggle("active", a.dataset.nav === target));
@@ -194,6 +202,7 @@ async function render() {
     if (route.name === "detail") await viewDetail(route.id);
     else if (route.name === "settings") await viewSettings();
     else if (route.name === "prices") await viewPrices();
+    else if (route.name === "materials") await viewMaterials();
     else if (route.name === "objects") await viewObjects();
     else if (route.name === "object") await viewObject(route.id);
     else if (route.name === "estimates") await viewDashboard();
@@ -215,32 +224,106 @@ async function refreshNavProvider() {
 }
 
 // ───────────────────────── home ─────────────────────────
+// SVG-иллюстрация для hero: небоскрёб + музей (вместо самолёта из референса).
+// Векторная, тематизирована под Yale Blue; окна башни генерируются циклом.
+function heroIllustration() {
+  const cols = [394, 410, 426, 442, 458];
+  const rows = [];
+  for (let y = 140; y <= 300; y += 20) rows.push(y);
+  const lit = new Set(["410-160", "442-200", "394-240", "458-280", "426-140"]);
+  let win = "";
+  for (const x of cols) for (const y of rows) {
+    const g = lit.has(`${x}-${y}`);
+    win += `<rect x="${x}" y="${y}" width="10" height="12" rx="1.5" fill="${g ? "#F4B41A" : "#0A4C97"}" opacity="${g ? 1 : 0.8}"/>`;
+  }
+  return `<svg class="hero-svg" viewBox="0 0 560 380" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Небоскрёб и музей">
+    <circle cx="452" cy="72" r="54" fill="#F4B41A" opacity="0.16"/>
+    <ellipse cx="285" cy="350" rx="240" ry="18" fill="#00274D" opacity="0.30"/>
+    <!-- Музей -->
+    <rect x="70" y="314" width="212" height="10" rx="2" fill="#EAF0F7"/>
+    <rect x="84" y="302" width="184" height="12" rx="2" fill="#fff"/>
+    <rect x="94" y="216" width="164" height="88" fill="#fff"/>
+    <rect x="94" y="216" width="164" height="88" fill="#00274D" opacity="0.05"/>
+    <g fill="#fff">
+      <rect x="106" y="224" width="16" height="80" rx="3"/><rect x="137" y="224" width="16" height="80" rx="3"/>
+      <rect x="168" y="224" width="16" height="80" rx="3"/><rect x="199" y="224" width="16" height="80" rx="3"/>
+      <rect x="230" y="224" width="16" height="80" rx="3"/>
+    </g>
+    <g fill="#00274D" opacity="0.10">
+      <rect x="118" y="224" width="4" height="80"/><rect x="149" y="224" width="4" height="80"/>
+      <rect x="180" y="224" width="4" height="80"/><rect x="211" y="224" width="4" height="80"/>
+      <rect x="242" y="224" width="4" height="80"/>
+    </g>
+    <rect x="86" y="204" width="180" height="16" rx="2" fill="#EAF0F7"/>
+    <path d="M176 150 L270 204 L82 204 Z" fill="#fff"/>
+    <path d="M176 150 L270 204 L82 204 Z" fill="#00274D" opacity="0.05"/>
+    <path d="M176 150 L270 204 L82 204" stroke="#F4B41A" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="176" cy="180" r="7" fill="#F4B41A"/>
+    <!-- Небоскрёб -->
+    <rect x="422" y="66" width="4" height="40" fill="#EAF0F7"/>
+    <circle cx="424" cy="62" r="5" fill="#F4B41A"/>
+    <rect x="402" y="106" width="44" height="20" fill="#EAF0F7"/>
+    <rect x="384" y="126" width="92" height="200" fill="#fff"/>
+    ${win}
+    <rect x="450" y="126" width="26" height="200" fill="#00274D" opacity="0.12"/>
+  </svg>`;
+}
+
 async function viewHome() {
   APP().innerHTML = `
-    <div class="page home">
-      <h1 class="title">Yale Building Calculator</h1>
-      <p class="subtitle">Предварительная (ориентировочная) смета строительства по нормам РК:
-        задаёте параметры объекта — система считает объёмы, ресурсы и стоимость с разделами,
-        накладными, резервом и НДС.</p>
-      <div class="home-cards">
-        <a class="home-card" href="#/estimates">
-          <div class="hc-ico">📄</div>
-          <h3>Просто смета</h3>
-          <p>Создайте смету напрямую: габариты, этажность, форма и класс отделки — и расчёт готов.</p>
-          <span class="hc-link">Перейти к сметам →</span>
-        </a>
-        <a class="home-card" href="#/objects">
-          <div class="hc-ico">📍</div>
-          <h3>Через объект</h3>
-          <p>Подберите участок на карте, проверьте его по кадастру/генплану, постройте концепт
-            здания — смета сформируется и привяжется к объекту.</p>
-          <span class="hc-link">Перейти к объектам →</span>
-        </a>
+    <section class="hero">
+      <div class="hero-inner">
+        ${heroIllustration()}
+        <div class="hero-grid">
+          <div class="hero-left">
+            <h1 class="hero-title">Помогаем считать<br><span class="circled"><span class="ct">сметы строительства</span><svg class="scribble" viewBox="0 0 320 96" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M28 60 C 60 22, 150 14, 236 24 C 300 32, 316 58, 286 76 C 246 100, 92 96, 44 78 C 10 66, 10 34, 40 26" stroke="#F4B41A" stroke-width="4.5" stroke-linecap="round"/></svg></span><br>по нормам РК</h1>
+            <p class="hero-sub">Сервис предварительной оценки стоимости и ресурсов строительства в Казахстане.</p>
+            <div class="hero-cta">
+              <a class="hero-btn primary" href="#/estimates">Создать смету</a>
+              <a class="hero-btn ghost" href="#/objects">Подобрать участок</a>
+            </div>
+          </div>
+          <div class="hero-stats">
+            <div class="stat big"><div class="num">27 420</div><div class="lbl">материалов с ценами в справочнике РК</div></div>
+            <div class="stat"><div class="num">60+</div><div class="lbl">нормативных документов РК</div></div>
+            <div class="stat"><div class="num">16</div><div class="lbl">регионов — тарифные ставки труда</div></div>
+            <div class="stat"><div class="num">10 мин</div><div class="lbl">смета вместо часов ручной работы</div></div>
+            <div class="stat"><div class="num">№253-VIII</div><div class="lbl">Строительный кодекс РК с 01.07.2026</div></div>
+          </div>
+        </div>
       </div>
-      <div class="home-steps"><span>Как это работает:</span>
-        <b>1.</b> объект или параметры → <b>2.</b> концепт и форма здания →
-        <b>3.</b> ресурсная смета → <b>4.</b> экспорт в Word.</div>
-    </div>`;
+    </section>
+
+    <section class="why">
+      <h2>Почему выбирают Yale Building Calculator</h2>
+      <p class="why-sub">От параметров участка до ресурсной сметы по нормам РК — с проверкой площадки и справочником цен.</p>
+      <div class="why-grid">
+        <div class="why-card">
+          <div class="ic">🏙️</div>
+          <h3>Форма здания за минуты</h3>
+          <p>ИИ-генератор массинга по параметрам участка с нормо- и физ-контролем.</p>
+        </div>
+        <div class="why-card">
+          <div class="ic">📐</div>
+          <h3>Смета по нормам РК</h3>
+          <p>Объёмы, ресурсы и стоимость: СН РК, СНиП, ТР и новый Строительный кодекс.</p>
+        </div>
+        <div class="why-card">
+          <div class="ic">🗺️</div>
+          <h3>Проверка участка</h3>
+          <p>Кадастр и генплан, тектонические разломы и сейсмика прямо на карте.</p>
+        </div>
+        <div class="why-card">
+          <div class="ic">📊</div>
+          <h3>Цены и экспорт</h3>
+          <p>Реальные цены материалов РК, бенчмаркинг и выгрузка сметы в Excel.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="home-steps"><div class="flow"><span>Как это работает:</span>
+      <b>1.</b> объект или параметры → <b>2.</b> концепт и форма здания →
+      <b>3.</b> ресурсная смета → <b>4.</b> экспорт.</div></div>`;
 }
 
 // ───────────────────────── dashboard ─────────────────────────
@@ -1184,6 +1267,94 @@ function renderSettingsLogin(msg) {
   document.getElementById("loginPass").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
 }
 
+// ───────────────────── справочник материалов + тарифы (SADI) ─────────────────────
+function materialRows(items) {
+  if (!items.length) return `<div class="empty">Ничего не найдено. Уточните запрос.</div>`;
+  return `<table class="mat-table"><thead><tr>
+      <th>Код</th><th>Наименование</th><th>Ед.</th><th class="r">Цена, ₸</th><th>Отдел</th></tr></thead><tbody>` +
+    items.map((m) => `<tr>
+      <td class="code">${escapeHtml(m.code)}</td>
+      <td>${escapeHtml(m.name)}</td>
+      <td class="mut">${escapeHtml(m.unit || "—")}</td>
+      <td class="r">${m.price != null ? money(m.price) : "<span class='mut'>—</span>"}</td>
+      <td class="mut sm">${escapeHtml((m.category || "").replace(/^Отдел\s+/, ""))}</td>
+    </tr>`).join("") + `</tbody></table>`;
+}
+
+async function viewMaterials() {
+  let cats = [], regions = [];
+  try { cats = await Api.materialCategories(); } catch (e) { /* ignore */ }
+  try { regions = await Api.tariffRegions(); } catch (e) { /* ignore */ }
+  APP().innerHTML = `
+    <div class="page">
+      <h1 class="title">Справочник материалов и тарифов</h1>
+      <p class="subtitle">Каталог материалов РК (коды НДЦС, наименования, ориентировочные цены) и
+        сметные тарифные ставки труда по регионам. Источник: sadi.kz. Справочно — для подбора цен и кодов.</p>
+
+      <div class="card">
+        <div class="mat-controls">
+          <input id="matQ" type="text" placeholder="Поиск: бетон, арматура, кирпич, код 21-020101…" autofocus>
+          <select id="matCat"><option value="">Все отделы</option>${
+            cats.map((c) => `<option value="${escapeAttr(c.category)}">${escapeHtml(c.category.replace(/^Отдел\s+/, ""))} (${c.count})</option>`).join("")}</select>
+          <label class="chk"><input type="checkbox" id="matPriced" checked> только с ценой</label>
+        </div>
+        <div id="matMeta" class="hint" style="margin:4px 0 10px"></div>
+        <div id="matResults"><div class="hint">Введите запрос — покажем до 50 позиций.</div></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 10px">Тарифные ставки труда по регионам <span class="mut sm">(ред. 2016)</span></h3>
+        <div class="mat-controls">
+          <select id="tarRegion">${regions.map((r) => `<option ${r === "Астана" ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}</select>
+          <select id="tarKind">
+            <option value="рабочие-строители/машинисты">рабочие-строители / машинисты</option>
+            <option value="ИТР">инженерное звено (ИТР)</option></select>
+        </div>
+        <div id="tarResults" class="hint" style="margin-top:10px">Выберите регион.</div>
+      </div>
+    </div>`;
+
+  const qEl = document.getElementById("matQ");
+  const catEl = document.getElementById("matCat");
+  const pricedEl = document.getElementById("matPriced");
+  const results = document.getElementById("matResults");
+  const meta = document.getElementById("matMeta");
+  let timer = null;
+  async function runSearch() {
+    const q = qEl.value.trim();
+    if (!q && !catEl.value) { results.innerHTML = `<div class="hint">Введите запрос — покажем до 50 позиций.</div>`; meta.textContent = ""; return; }
+    try {
+      const r = await Api.searchMaterials(q, { onlyPriced: pricedEl.checked, category: catEl.value, limit: 50 });
+      meta.textContent = `Найдено ${r.total}; показаны первые ${Math.min(r.total, r.limit)}.`;
+      results.innerHTML = materialRows(r.items);
+    } catch (e) { results.innerHTML = `<div class="empty">Ошибка поиска.</div>`; }
+  }
+  const debounced = () => { clearTimeout(timer); timer = setTimeout(runSearch, 220); };
+  qEl.addEventListener("input", debounced);
+  catEl.addEventListener("change", runSearch);
+  pricedEl.addEventListener("change", runSearch);
+
+  const tarRegion = document.getElementById("tarRegion");
+  const tarKind = document.getElementById("tarKind");
+  const tarResults = document.getElementById("tarResults");
+  async function runTariffs() {
+    if (!tarRegion.value) return;
+    try {
+      const r = await Api.tariffs(tarRegion.value, tarKind.value);
+      if (!r.items.length) { tarResults.innerHTML = `<div class="empty">Нет данных.</div>`; return; }
+      tarResults.innerHTML = `<table class="mat-table"><thead><tr>
+          <th>Разряд/должность</th><th class="r">Коэф.</th><th class="r">Ставка, ₸</th></tr></thead><tbody>` +
+        r.items.map((t) => `<tr>
+          <td>${escapeHtml(t.name || t.category)}</td>
+          <td class="r mut">${t.coef != null ? t.coef : "—"}</td>
+          <td class="r">${money(t.rate)}</td></tr>`).join("") + `</tbody></table>`;
+    } catch (e) { tarResults.innerHTML = `<div class="empty">Ошибка загрузки.</div>`; }
+  }
+  tarRegion.addEventListener("change", runTariffs);
+  tarKind.addEventListener("change", runTariffs);
+  if (regions.length) runTariffs();
+}
+
 async function viewSettings() {
   if (!ADMIN_AUTH) return renderSettingsLogin();
   let s, prompts;
@@ -1399,6 +1570,9 @@ async function viewObjects() {
   });
   document.getElementById("citySel").addEventListener("change", (ev) =>
     map.setView(CITY_CENTER[ev.target.value] || CITY_CENTER["Алматы"], 12));
+  // контейнер получает финальную ширину после вставки в DOM — пересчитываем размер,
+  // иначе тайлы не покрывают карту (серая полоса справа, «уехавшая» карта)
+  setTimeout(() => map.invalidateSize(), 0);
   renderObjForm();
   await drawObjList();
 }
@@ -1490,6 +1664,8 @@ async function viewObject(id) {
       onEachFeature: (f, layer) => layer.bindTooltip(f.properties && f.properties.name || "разлом"),
     }).addTo(map);
   } catch (e) { /* слой разломов не критичен */ }
+  // пересчёт размера после вставки в DOM — тайлы иначе съезжают (серые поля)
+  setTimeout(() => map.invalidateSize(), 0);
 
   document.getElementById("objTitle").addEventListener("change", async (ev) => {
     await Api.patchObject(id, { name: ev.target.value }); toast("Сохранено");

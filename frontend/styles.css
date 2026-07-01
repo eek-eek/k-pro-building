@@ -13,6 +13,12 @@
   --accent-tint: #E8EEF7;
   --accent-dark: #1E3F73;
 
+  /* фирменные цвета Yale — только для главной страницы (hero) */
+  --yale: #00356B;      /* Yale Blue */
+  --yale-2: #0A4C97;    /* светлее — блики/окна */
+  --yale-dark: #00274D; /* тени */
+  --gold: #F4B41A;      /* акцент */
+
   --ok: #2F7A55;        /* Утверждена / рассчитана */
   --ok-bg: #E7F1EC;
   --warn: #9A6A12;      /* На согласовании */
@@ -334,8 +340,8 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 }
 
 /* ── Карта и объекты (SP1) ── */
-.map { height: 920px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
-.map-mini { height: 480px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.map { height: 690px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+.map-mini { height: 360px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .obj-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
 .obj-form .field { margin: 0; min-width: 160px; }
 .concept-panel { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 14px 0; background: var(--surface); }
@@ -351,23 +357,58 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
 .massing:active { cursor: grabbing; }
 .massing canvas { display: block; }
 
-/* ── Главная ── */
-.home .subtitle { max-width: 720px; }
-.home-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin: 26px 0; }
-.home-card { display: block; text-decoration: none; color: inherit; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 18px;
-  transition: border-color .12s, transform .12s, box-shadow .12s; }
-.home-card:hover { border-color: var(--accent); transform: translateY(-2px);
-  box-shadow: 0 10px 30px rgba(0,0,0,.06); }
-.home-card .hc-ico { font-size: 30px; }
-.home-card h3 { margin: 10px 0 6px; font-size: 18px; font-weight: 700; }
-.home-card p { color: var(--text-2); font-size: 14px; line-height: 1.55; margin: 0 0 14px; }
-.home-card .hc-link { color: var(--accent); font-weight: 600; font-size: 14px; }
-.home-steps { color: var(--text-2); font-size: 14px; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
-.home-steps span { font-weight: 700; color: var(--text); margin-right: 8px; }
+/* ── Главная: hero в фирменном стиле Yale ── */
+.hero { width: 100%; background: var(--yale); color: #fff; overflow: hidden;
+  background-image: radial-gradient(120% 95% at 82% -12%, var(--yale-2) 0%, rgba(10,76,151,0) 55%); }
+.hero-inner { max-width: var(--maxw); margin: 0 auto; padding: 6px 28px 46px; }
+.hero-svg { width: min(500px, 76%); height: auto; display: block; margin: 0 auto -8px; }
+.hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 40px; align-items: center; }
+
+.hero-title { margin: 0; font-size: 46px; line-height: 1.07; font-weight: 800; letter-spacing: -1px; }
+.hero-title .circled { position: relative; display: inline-block; white-space: nowrap; }
+.hero-title .circled > .ct { position: relative; z-index: 1; }
+.hero-title .circled > .scribble { position: absolute; left: -12px; top: -8px; z-index: 0;
+  width: calc(100% + 24px); height: calc(100% + 18px); overflow: visible; pointer-events: none; }
+.hero-title .circled > .scribble path { vector-effect: non-scaling-stroke; }
+.hero-sub { margin: 18px 0 0; font-size: 16px; line-height: 1.5; color: rgba(255,255,255,.82); max-width: 440px; }
+.hero-cta { display: flex; gap: 12px; margin-top: 26px; flex-wrap: wrap; }
+.hero-btn { display: inline-block; border-radius: 10px; padding: 13px 22px; font-weight: 700; font-size: 15px;
+  text-decoration: none; transition: transform .12s, background .12s; }
+.hero-btn.primary { background: var(--gold); color: #3a2a00; box-shadow: 0 8px 22px rgba(244,180,26,.30); }
+.hero-btn.primary:hover { transform: translateY(-2px); }
+.hero-btn.ghost { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+.hero-btn.ghost:hover { background: rgba(255,255,255,.16); }
+
+.hero-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.stat { background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.15); border-radius: 14px; padding: 18px 20px; }
+.stat .num { font-size: 25px; font-weight: 800; letter-spacing: -.5px; }
+.stat .lbl { margin-top: 4px; font-size: 12.5px; line-height: 1.35; color: rgba(255,255,255,.72); }
+.stat.big { grid-column: 1 / -1; background: rgba(255,255,255,.14); }
+.stat.big .num { font-size: 40px; color: var(--gold); }
+
+/* ── Главная: «почему выбирают» ── */
+.why { max-width: var(--maxw); margin: 0 auto; padding: 54px 28px 24px; }
+.why h2 { margin: 0 0 6px; text-align: center; font-size: 30px; font-weight: 800; letter-spacing: -.6px; }
+.why-sub { margin: 0 auto 30px; max-width: 620px; text-align: center; color: var(--text-2); font-size: 15px; }
+.why-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.why-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 24px 20px;
+  text-align: center; transition: transform .12s, box-shadow .12s, border-color .12s; }
+.why-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,39,77,.09); border-color: var(--line-2); }
+.why-card .ic { font-size: 34px; line-height: 1; }
+.why-card h3 { margin: 12px 0 8px; font-size: 16px; font-weight: 700; }
+.why-card p { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
+
+.home-steps { max-width: var(--maxw); margin: 8px auto 56px; padding: 0 28px; color: var(--text-2); font-size: 14px; }
+.home-steps .flow { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
 .home-steps b { color: var(--accent); font-family: var(--mono); }
-@media (max-width: 720px) { .home-cards { grid-template-columns: 1fr; } }
+.home-steps .flow > span { font-weight: 700; color: var(--text); margin-right: 8px; }
+
+@media (max-width: 900px) { .why-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 860px) {
+  .hero-grid { grid-template-columns: 1fr; gap: 26px; }
+  .hero-title { font-size: 34px; }
+}
+@media (max-width: 520px) { .why-grid { grid-template-columns: 1fr; } }
 
 /* внутренний справочник цен (бенчмаркинг) */
 .bm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -411,3 +452,19 @@ ul.steps li.running .mark { animation: blink 1s steps(1) infinite; }
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 14px 20px; border-top: 1px solid var(--line);
 }
+
+/* ── Справочник материалов / тарифы (SADI) ── */
+.mat-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.mat-controls #matQ { flex: 1 1 320px; min-width: 240px; }
+.mat-controls select { height: 38px; }
+.mat-controls .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.mat-controls .chk input { width: auto; }
+.mat-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+.mat-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-3); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.mat-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.mat-table tr:hover td { background: var(--accent-tint); }
+.mat-table .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mat-table .code { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
+.mat-table .mut { color: var(--text-3); }
+.mat-table .sm { font-size: 12px; }
