@@ -109,7 +109,7 @@ const DEFAULT_INPUT = {
   floors: 10, total_area: 1500, building_length: 10, building_width: 15, floor_height: 3, form: "box",
   structure_type: "Монолитный железобетон", foundation_type: "Плита", finish_level: "Черновая",
   engineering_level: "Базовая", basement: false, parking: false, use_search: false, demo_mode: false,
-  overhead_pct: 8, contingency_pct: 5, vat_pct: 12, works: [], assumptions: "",
+  overhead_pct: 8, contingency_pct: 5, vat_pct: 16, works: [], assumptions: "",
 };
 
 function inputsForm(inp) {

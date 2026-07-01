@@ -53,7 +53,7 @@ class BuildingInput(BaseModel):
 
     overhead_pct: float = 8.0
     contingency_pct: float = 5.0
-    vat_pct: float = 12.0
+    vat_pct: float = 16.0  # НДС РК с 2026
 
     works: list[str] = Field(default_factory=list)
     assumptions: str = ""
