@@ -275,3 +275,42 @@ class WorkResource(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class MaterialPrice(Base):
+    """Справочник материалов РК (выгрузка sadi.kz): код НДЦС, наименование, ед.,
+    ориентировочная цена (может отсутствовать) и отдел-категория. Поисковый
+    справочник для сметчика и офлайн-источник цен материалов."""
+
+    __tablename__ = "material_prices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    # «код + наименование» в нижнем регистре (Python .lower() — ловит кириллицу,
+    # т.к. SQLite LIKE регистронезависим только для ASCII). Для поиска.
+    name_lc: Mapped[str] = mapped_column(Text, default="")
+    unit: Mapped[str] = mapped_column(String(32), default="")
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)  # None — цена не подана
+    category: Mapped[str] = mapped_column(Text, default="")           # «Отдел ...»
+    region: Mapped[str] = mapped_column(String(64), default="KZ")
+    source: Mapped[str] = mapped_column(String(32), default="sadi.kz")
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class LaborTariff(Base):
+    """Сметные тарифные ставки труда по регионам РК (sadi.kz, ред. 2016):
+    регион, вид (рабочие-строители/машинисты | ИТР), разряд, коэффициент, ставка (тг)."""
+
+    __tablename__ = "labor_tariffs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    region: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(48), default="")  # рабочие-строители/машинисты | ИТР
+    category: Mapped[str] = mapped_column(String(32), default="")  # разряд
+    coef: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate: Mapped[float] = mapped_column(Float, default=0.0)  # ставка, тг
+    name: Mapped[str] = mapped_column(Text, default="")
+    edition: Mapped[str] = mapped_column(String(16), default="2016")
+    source: Mapped[str] = mapped_column(String(32), default="sadi.kz")
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+

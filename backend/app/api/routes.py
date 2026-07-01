@@ -7,7 +7,7 @@ import json
 import math
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -28,7 +28,7 @@ from ..calc.estimate import VALID_WORK_KEYS
 from ..calc.units import unit_ok_for_kind
 from ..gosdata.core import import_resource_rows
 from ..gosdata.xlsx import read_xlsx_dicts
-from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, NormDocument, PriceItem, Prompt, WorkResource
+from ..models import BuildingObject, Estimate, EstimateVersion, ChatMessage, Job, LaborTariff, MaterialPrice, NormDocument, PriceItem, Prompt, WorkResource
 from ..norms import resolve_norm_profile
 from ..pricesource import get_price_source, available_sources
 from ..prompts import PROMPT_DEFAULTS
@@ -436,6 +436,78 @@ def list_prices(db: Session = Depends(get_db)) -> list[dict]:
         }
         for i in items
     ]
+
+
+@router.get("/materials")
+def search_materials(
+    q: str = "", limit: int = 50, only_priced: bool = False,
+    category: str = "", db: Session = Depends(get_db),
+) -> dict:
+    """Поиск по справочнику материалов РК (SADI). q — по коду или наименованию.
+    only_priced — только позиции с ценой; category — фильтр по отделу."""
+    limit = max(1, min(limit, 200))
+    stmt = select(MaterialPrice)
+    q = q.strip()
+    if q:
+        # name_lc уже в нижнем регистре (с кириллицей); q тоже опускаем — plain LIKE
+        stmt = stmt.where(MaterialPrice.name_lc.like(f"%{q.lower()}%"))
+    if only_priced:
+        stmt = stmt.where(MaterialPrice.price.is_not(None))
+    if category:
+        stmt = stmt.where(MaterialPrice.category == category)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    # приоритет позициям с ценой, затем по коду
+    rows = db.scalars(
+        stmt.order_by(MaterialPrice.price.is_(None), MaterialPrice.code).limit(limit)
+    ).all()
+    return {
+        "total": total, "limit": limit,
+        "items": [
+            {"code": r.code, "name": r.name, "unit": r.unit,
+             "price": r.price, "category": r.category, "source": r.source}
+            for r in rows
+        ],
+    }
+
+
+@router.get("/materials/categories")
+def material_categories(db: Session = Depends(get_db)) -> list[dict]:
+    """Отделы каталога материалов с числом позиций (для фильтра)."""
+    rows = db.execute(
+        select(MaterialPrice.category, func.count())
+        .group_by(MaterialPrice.category)
+        .order_by(MaterialPrice.category)
+    ).all()
+    return [{"category": c or "—", "count": n} for c, n in rows]
+
+
+@router.get("/tariffs")
+def list_tariffs(region: str = "", kind: str = "", db: Session = Depends(get_db)) -> dict:
+    """Сметные тарифные ставки труда по региону (SADI, ред. 2016)."""
+    stmt = select(LaborTariff)
+    if region:
+        stmt = stmt.where(LaborTariff.region == region)
+    if kind:
+        stmt = stmt.where(LaborTariff.kind == kind)
+    rows = db.scalars(stmt.order_by(LaborTariff.region, LaborTariff.kind, LaborTariff.id)).all()
+    return {
+        "edition": rows[0].edition if rows else "2016",
+        "count": len(rows),
+        "items": [
+            {"region": r.region, "kind": r.kind, "category": r.category,
+             "coef": r.coef, "rate": r.rate, "name": r.name}
+            for r in rows
+        ],
+    }
+
+
+@router.get("/tariffs/regions")
+def tariff_regions(db: Session = Depends(get_db)) -> list[str]:
+    """Список регионов, по которым есть тарифные ставки."""
+    rows = db.execute(
+        select(LaborTariff.region).group_by(LaborTariff.region).order_by(LaborTariff.region)
+    ).all()
+    return [r[0] for r in rows]
 
 
 @router.get("/estimates/{estimate_id}/chat")
