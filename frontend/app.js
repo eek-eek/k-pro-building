@@ -296,8 +296,6 @@ async function viewHome() {
     </section>
 
     <section class="why">
-      <h2>Почему выбирают Yale Building Calculator</h2>
-      <p class="why-sub">От параметров участка до ресурсной сметы по нормам РК — с проверкой площадки и справочником цен.</p>
       <div class="why-grid">
         <div class="why-card">
           <div class="ic">🏙️</div>
