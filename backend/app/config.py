@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     cross_check_enabled: bool = False
     cross_check_provider: str = "openai"  # проверяющий провайдер (ансамбль)
     price_inflation_annual_pct: float = 0.0  # годовая инфляция для устаревших цен (0 = выкл)
+    labor_tariff_enabled: bool = True   # ставки труда по тарифам SADI (регион+разряд) в расчёте
+    labor_tariff_index: float = 1.0     # индекс тарифов 2016→год расчёта (шкалы близки, дефолт 1.0)
 
     # Админ-доступ (Настройки/Промпты). На проде ОБЯЗАТЕЛЬНО задать ADMIN_PASSWORD
     # в .env — дефолт ниже только для локальной разработки.

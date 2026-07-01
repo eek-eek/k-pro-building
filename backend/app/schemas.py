@@ -362,6 +362,8 @@ class SettingsUpdate(BaseModel):
     cross_check_enabled: Optional[bool] = None
     cross_check_provider: Optional[str] = None
     price_inflation_annual_pct: Optional[float] = None
+    labor_tariff_enabled: Optional[bool] = None
+    labor_tariff_index: Optional[float] = None
 
 
 class TestConnectionRequest(BaseModel):

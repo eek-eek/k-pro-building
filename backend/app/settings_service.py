@@ -30,8 +30,9 @@ SETTING_KEYS = (
     "llm_provider", "gemini_api_key", "anthropic_api_key", "openai_api_key",
     "gemini_model", "anthropic_model", "openai_model", "llm_use_search",
     "cross_check_enabled", "cross_check_provider", "price_inflation_annual_pct",
+    "labor_tariff_enabled", "labor_tariff_index",
 )
-_BOOL_KEYS = {"llm_use_search", "cross_check_enabled"}
+_BOOL_KEYS = {"llm_use_search", "cross_check_enabled", "labor_tariff_enabled"}
 
 
 @dataclass
@@ -47,6 +48,8 @@ class EffectiveSettings:
     cross_check_enabled: bool = False
     cross_check_provider: str = "openai"
     price_inflation_annual_pct: float = 0.0  # годовая инфляция для устаревших цен (0 = выкл)
+    labor_tariff_enabled: bool = True
+    labor_tariff_index: float = 1.0
 
     def active_key(self) -> str:
         return getattr(self, f"{self.llm_provider}_api_key", "")
@@ -91,6 +94,8 @@ def get_effective_settings(db: Session) -> EffectiveSettings:
         cross_check_enabled=_as_bool(pick("cross_check_enabled")),
         cross_check_provider=pick("cross_check_provider"),
         price_inflation_annual_pct=_as_float(pick("price_inflation_annual_pct")),
+        labor_tariff_enabled=_as_bool(pick("labor_tariff_enabled")),
+        labor_tariff_index=_as_float(pick("labor_tariff_index"), 1.0),
     )
 
 

@@ -14,6 +14,7 @@ from ..schemas import (
 )
 from ..settings_service import get_effective_settings
 from .geometry import derive
+from .labor_tariff import apply_labor_tariffs, region_for_city, worker_rates
 from .pricing import get_price
 from .resource_catalog import db_snapshot_for, rollup
 from .volumes import compute_volumes
@@ -162,8 +163,15 @@ def build_estimate(
     eff = get_effective_settings(db)
     inflation_pct = eff.price_inflation_annual_pct
     today = dt.datetime.now(dt.timezone.utc).date()
+    today_iso = today.isoformat()
     stale_count = 0
     inflated = False
+
+    # Ставки труда по тарифам SADI (регион+разряд). Одна выборка на регион.
+    tariff_region = region_for_city(region) if eff.labor_tariff_enabled else None
+    tariff_rates = worker_rates(db, tariff_region) if tariff_region else {}
+    tariff_index = eff.labor_tariff_index or 1.0
+    tariff_applied = False
 
     works_lc = [w.lower() for w in inp.works if w.strip()]
     lines: list[EstimateLine] = []
@@ -180,6 +188,10 @@ def build_estimate(
             if vol is None or vol.quantity <= 0:
                 continue
             resources = db_snapshot_for(db, key, region)
+            # Ставки труда из тарифов SADI (до инфляции: тариф штампуется «сегодня»,
+            # поэтому не индексируется повторно; материалы/машины — как раньше).
+            if apply_labor_tariffs(resources, tariff_rates, tariff_index, today_iso):
+                tariff_applied = True
             # Пер-ресурсная индексация инфляции (мутирует цены ресурсов до свёртки —
             # переживает пересчёт; свежий ресурс не маскирует устаревшие).
             psource, pdate, pstale, p_inflated = _inflate_resources(resources, today, inflation_pct)
@@ -285,6 +297,12 @@ def build_estimate(
     ]
     if area_warning:
         warnings.insert(0, area_warning)
+    if tariff_applied:
+        idx = f" × индекс {tariff_index:g}" if tariff_index != 1.0 else ""
+        warnings.append(
+            f"Ставки труда — по сметным тарифам SADI (регион «{tariff_region}», "
+            f"ред. 2016{idx}). Отключается в Настройках."
+        )
     if review_count:
         warnings.append(
             f"Позиций, требующих проверки сметчиком: {review_count}. "

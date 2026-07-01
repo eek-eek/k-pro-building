@@ -1394,6 +1394,10 @@ async function viewSettings() {
         <div class="field"><label>Годовая инфляция для устаревших цен, %</label>
           <input type="number" step="0.5" min="0" id="inflation" value="${escapeAttr(s.price_inflation_annual_pct ?? 0)}">
           <div class="hint">0 = выкл. Цены старше 6 мес индексируются на этот коэффициент (НДЦС РК).</div></div>
+        <div class="checks"><label><input type="checkbox" id="laborTariff" ${s.labor_tariff_enabled ? "checked" : ""}> Ставки труда по сметным тарифам SADI (регион + разряд)</label></div>
+        <div class="field"><label>Индекс тарифов труда (2016 → сейчас)</label>
+          <input type="number" step="0.05" min="0.1" id="laborTariffIndex" value="${escapeAttr(s.labor_tariff_index ?? 1)}">
+          <div class="hint">Труд считается по тарифной ставке ₸/чел-ч региона × индекс. 1.0 — шкала 2016 ≈ рынок 2026. Выкл — цены труда из сид-каталога.</div></div>
         <div class="row-actions">
           <button class="btn primary" id="saveSettings">Сохранить</button>
           <button class="btn" id="testConn">Проверить соединение</button>
@@ -1446,6 +1450,8 @@ async function viewSettings() {
       cross_check_enabled: document.getElementById("crossCheck").checked,
       cross_check_provider: document.getElementById("crossProvider").value || undefined,
       price_inflation_annual_pct: Math.max(0, Number(document.getElementById("inflation").value || 0)),
+      labor_tariff_enabled: document.getElementById("laborTariff").checked,
+      labor_tariff_index: Math.max(0.1, Number(document.getElementById("laborTariffIndex").value || 1)),
     };
     const key = apiKeyEl.value.trim();
     if (key) body.api_key = key;   // шлём только реальный новый ключ (никогда masked)

@@ -556,6 +556,8 @@ def get_settings_api(db: Session = Depends(get_db),
         "cross_check_enabled": eff.cross_check_enabled,
         "cross_check_provider": eff.cross_check_provider,
         "price_inflation_annual_pct": eff.price_inflation_annual_pct,
+        "labor_tariff_enabled": eff.labor_tariff_enabled,
+        "labor_tariff_index": eff.labor_tariff_index,
         "catalog": MODEL_CATALOG,
         # Ключи/модели по каждому провайдеру — чтобы фронт показывал и правил
         # именно выбранного провайдера (а не подставлял ключ активного для всех).
@@ -583,6 +585,10 @@ def put_settings_api(body: SettingsUpdate, db: Session = Depends(get_db),
         updates["cross_check_provider"] = body.cross_check_provider
     if body.price_inflation_annual_pct is not None:
         updates["price_inflation_annual_pct"] = max(0.0, body.price_inflation_annual_pct)
+    if body.labor_tariff_enabled is not None:
+        updates["labor_tariff_enabled"] = body.labor_tariff_enabled
+    if body.labor_tariff_index is not None:
+        updates["labor_tariff_index"] = max(0.1, body.labor_tariff_index)
     # Ключ обновляем только если прислали непустое РЕАЛЬНОЕ значение.
     # Маскированную строку (содержит «•») игнорируем — иначе в БД попадёт мусор
     # (напр. при переключении провайдера в UI поле могло держать чужой masked-ключ).
